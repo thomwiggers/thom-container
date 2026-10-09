@@ -42,7 +42,7 @@ ENV container=apple
 
 # Also trust the host's known_hosts, which devbox mounts read-only. ssh keeps
 # adding new hosts to the container's own ~/.ssh/known_hosts.
-RUN echo 'GlobalKnownHostsFile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2 {{ container.host_ssh_dir }}/known_hosts' \
+RUN echo 'GlobalKnownHostsFile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2 {{ container.host_known_hosts }}' \
       > /etc/ssh/ssh_config.d/host-known-hosts.conf
 
 # GitHub CLI from the official apt repository.

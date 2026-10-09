@@ -86,7 +86,7 @@ check "run with defaults" "$out" \
     "-e THOM_CONTAINER_TERMINFO=$fake_terminfo " \
     "--ssh" \
     "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
-    "--volume $state/.host-ssh:/run/host-ssh:ro" \
+    "--volume $work/home/.ssh/known_hosts:/run/host-ssh/known_hosts:ro" \
     "ghcr.io/thomwiggers/thom-container:latest" \
     "!--cap-add"
 [[ -d "$state/private/.claude/projects/$claude_dir" ]] \
@@ -105,9 +105,6 @@ check "attaches to running container" "$out" \
 
 out=$(SSH_AUTH_SOCK='' devbox)
 check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
-
-cmp -s "$work/home/.ssh/known_hosts" "$state/.host-ssh/known_hosts" \
-    && pass "known_hosts copied" || fail "known_hosts copied" "$(ls -la "$state/.host-ssh")"
 
 mv "$work/home/.ssh/known_hosts" "$work/known_hosts.bak"
 out=$(devbox)
