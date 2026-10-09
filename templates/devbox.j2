@@ -138,7 +138,7 @@ else
 fi
 
 if [ -f "$key_dir/{{ container.key_file }}" ]; then
-    run_args+=(--mount "type=bind,source=$key_dir,target={{ container.key_dir }},readonly")
+    run_args+=(--volume "$key_dir:{{ container.key_dir }}:ro")
 else
     echo "warning: no age key at $key_dir/{{ container.key_file }}; encrypted dotfiles stay locked" >&2
 fi

@@ -100,7 +100,8 @@ RUN echo "claude cache bust: ${CLAUDE_CACHE_BUST}" \
 USER root
 ARG IMAGE_ID=unknown
 RUN cp -a /home/thom /opt/home-seed \
- && echo "${IMAGE_ID}" > /opt/home-seed/.thom-container-image
+ && echo "${IMAGE_ID}" > /opt/home-seed/.thom-container-image \
+ && chown 501:20 /opt/home-seed/.thom-container-image
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 

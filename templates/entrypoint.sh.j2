@@ -17,11 +17,10 @@ marker=.thom-container-image
 log() { echo "entrypoint: $*" >&2; }
 
 root_stage() {
-    if [ ! -e "$home_dir/$marker" ]; then
-        log "seeding $home_dir from image (existing files are kept)"
-        cp -a --update=none "$home_seed/." "$home_dir/"
-    fi
     chown "$user_uid:$user_gid" "$home_dir" 2>/dev/null || true
+
+    # Keep gpg-agent & co. from putting sockets in the virtiofs home.
+    install -d -m 0700 -o "$user_uid" -g "$user_gid" "/run/user/$user_uid"
 
     # Apple container's --ssh mounts the agent socket owned by root.
     if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
@@ -37,6 +36,12 @@ root_stage() {
 
 user_stage() {
     local image_id home_id
+    if [ ! -e "$home_dir/$marker" ]; then
+        # As the user, so the copy works on a mount that refuses chown.
+        log "seeding $home_dir from image (existing files are kept)"
+        cp -a --update=none "$home_seed/." "$home_dir/"
+    fi
+
     image_id=$(cat "$home_seed/$marker" 2>/dev/null || echo unknown)
     home_id=$(cat "$home_dir/$marker" 2>/dev/null || echo none)
     if [ "$image_id" != "$home_id" ]; then
@@ -47,11 +52,14 @@ user_stage() {
         echo "$image_id" > "$home_dir/$marker"
     fi
 
+    # Link to the host's key rather than copying it into the persisted home.
     local -a apply_args=()
+    local key_link="$home_dir/.config/chezmoi/key.txt"
     if [ -f "$key_src" ]; then
-        mkdir -p "$home_dir/.config/chezmoi"
-        install -m 0600 "$key_src" "$home_dir/.config/chezmoi/key.txt"
-    elif [ ! -f "$home_dir/.config/chezmoi/key.txt" ]; then
+        mkdir -p "$(dirname "$key_link")"
+        ln -sfn "$key_src" "$key_link"
+    else
+        rm -f "$key_link"
         log "no age key at $key_src; skipping encrypted dotfiles"
         # Must be two separate words: the dotfiles' decrypt script looks for
         # the literal string "--exclude encrypted".

@@ -135,7 +135,7 @@ else
 fi
 
 if [ -f "$key_dir/key.txt" ]; then
-    run_args+=(--mount "type=bind,source=$key_dir,target=/run/host-chezmoi,readonly")
+    run_args+=(--volume "$key_dir:/run/host-chezmoi:ro")
 else
     echo "warning: no age key at $key_dir/key.txt; encrypted dotfiles stay locked" >&2
 fi
