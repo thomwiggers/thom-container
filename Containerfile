@@ -32,13 +32,6 @@ RUN apt-get update \
  && sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen \
  && locale-gen \
  && rm -rf /var/lib/apt/lists/*
-
-# Ghostty sets TERM=xterm-ghostty; Debian's ncurses-term only ships the
-# entry under the name "ghostty".
-RUN test -e /usr/share/terminfo/x/xterm-ghostty \
- || ln -s ../g/ghostty /usr/share/terminfo/x/xterm-ghostty; \
-    infocmp xterm-ghostty >/dev/null
-
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8
 

@@ -30,6 +30,8 @@ to the running container.
   `~/.config/chezmoi/key.txt` exists on the host, it is mounted read-only and
   the entrypoint runs `chezmoi apply` with encrypted files included.
 - **SSH agent** is forwarded with `container run --ssh`.
+- **Terminfo**: `devbox` sends `infocmp -x $TERM` from the host (Ghostty.app
+  ships `xterm-ghostty`), and the entrypoint compiles it into `~/.terminfo`.
 - **GitHub**: `devbox` passes the host's `gh auth token` in; the entrypoint
   runs `gh auth login --with-token` and unsets the variable. `~/.config/gh` is
   a tmpfs, so the token is never written to the persisted home. Pick an

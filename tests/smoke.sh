@@ -50,6 +50,10 @@ stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
 stub git 'echo "git $*"'
 # Host side: `gh auth token [--user U]`. Container side: `gh auth login`
 # echoes the token it read from stdin.
+# Host knows xterm only; container-side tic echoes what it would compile.
+stub infocmp '[ "$2" = xterm ] && echo fake-entry || exit 1'
+stub tic 'echo "tic $* stdin=$(cat)"'
+fake_terminfo=$(printf fake-entry | base64)
 stub gh 'case "$1 $2" in
     "auth token") [ -n "${GH_FAIL:-}" ] && exit 1; [ "${3:-}" = --user ] && echo "tok-$4" || echo tok ;;
     "auth login") echo "gh $* stdin=$(cat)"; [ -z "${GH_FAIL:-}" ] ;;
@@ -77,6 +81,7 @@ check "run with defaults" "$out" \
     "--tmpfs /home/thom/.ssh/sockets" \
     "--tmpfs /home/thom/.config/gh" \
     "-e THOM_CONTAINER_GH_TOKEN=tok " \
+    "-e THOM_CONTAINER_TERMINFO=$fake_terminfo " \
     "--ssh" \
     "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
     "ghcr.io/thomwiggers/thom-container:latest" \
@@ -93,10 +98,13 @@ check "profile, DIR, --docker and command" "$out" \
 out=$(RUNNING=1 devbox)
 check "attaches to running container" "$out" \
     "container exec -i -e TERM=xterm -e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock -e HOME=/home/thom --user thom --workdir /project dev-private-my-proj-" \
-    "/usr/bin/zsh -l" "!container run" "!THOM_CONTAINER_GH_TOKEN"
+    "/usr/bin/zsh -l" "!container run" "!THOM_CONTAINER_GH_TOKEN" "!THOM_CONTAINER_TERMINFO"
 
 out=$(SSH_AUTH_SOCK='' devbox)
 check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
+
+out=$(TERM=unknown-term devbox)
+check "terminal unknown to the host" "$out" "container run" "!THOM_CONTAINER_TERMINFO"
 
 out=$(devbox --no-gh)
 check "--no-gh" "$out" "container run" "!THOM_CONTAINER_GH_TOKEN"
@@ -200,7 +208,15 @@ check "seeding error is not fatal" "$out" "seeding $ep/home" "warning: some file
 chmod 600 "$ep/seed/unreadable"
 
 out=$(entry)
-check "no token, no login" "$out" "DONE" "!gh auth login"
+check "no token, no login" "$out" "DONE" "!gh auth login" "!tic"
+
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(THOM_CONTAINER_TERMINFO=$fake_terminfo entry sh -c 'echo "leak=${THOM_CONTAINER_TERMINFO:-none}"')
+check "installs host terminfo" "$out" "tic -x -o $ep/home/.terminfo - stdin=fake-entry" "leak=none"
+
+stub tic 'exit 1'
+out=$(THOM_CONTAINER_TERMINFO=$fake_terminfo entry)
+check "terminfo failure does not block start" "$out" "warning: could not install terminfo" "DONE"
 
 echo
 if ((failures)); then

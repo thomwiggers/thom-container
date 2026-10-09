@@ -86,6 +86,15 @@ user_stage() {
         echo "$image_id" > "$home_dir/$marker"
     fi
 
+    # Terminfo entry for the host terminal (base64 of `infocmp -x $TERM`).
+    if [ -n "${THOM_CONTAINER_TERMINFO:-}" ]; then
+        if ! printf '%s' "$THOM_CONTAINER_TERMINFO" | base64 -d \
+            | tic -x -o "$home_dir/.terminfo" - 2>/dev/null; then
+            log "warning: could not install terminfo for $TERM"
+        fi
+        unset THOM_CONTAINER_TERMINFO
+    fi
+
     # GitHub token from the host's gh. Logging in stores it in ~/.config/gh
     # (a tmpfs); the dotfiles already use gh as git's credential helper.
     if [ -n "${THOM_CONTAINER_GH_TOKEN:-}" ]; then

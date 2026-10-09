@@ -200,6 +200,15 @@ if [[ -n $docker ]]; then
     run_args+=(--cap-add ALL -e THOM_CONTAINER_DOCKER=1)
 fi
 
+# Ship the host's terminfo entry so the container knows terminals Debian
+# doesn't (e.g. xterm-ghostty, which Ghostty.app provides via $TERMINFO).
+# The entrypoint compiles it into ~/.terminfo, which persists, so attaching
+# with `container exec` later needs nothing.
+# ($terminfo is a zsh special parameter, hence term_entry.)
+if [[ -n ${TERM:-} ]] && term_entry=$(infocmp -x "$TERM" 2>/dev/null); then
+    run_args+=(-e "THOM_CONTAINER_TERMINFO=$(print -rn -- "$term_entry" | base64 | tr -d '\n')")
+fi
+
 if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
     run_args+=(--ssh)
 else
