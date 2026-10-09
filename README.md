@@ -15,6 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/thomwiggers/thom-container/main/ins
 devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
+devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
 devbox --docker             # also start dockerd inside (grants all capabilities)
 ```
