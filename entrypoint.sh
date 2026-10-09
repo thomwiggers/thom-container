@@ -27,6 +27,10 @@ root_stage() {
         chown "$user_uid:$user_gid" "$home_dir/.ssh/sockets"
         chmod 0700 "$home_dir/.ssh/sockets"
     fi
+    if [ -d "$home_dir/.config/gh" ]; then
+        chown "$user_uid:$user_gid" "$home_dir/.config/gh"
+        chmod 0700 "$home_dir/.config/gh"
+    fi
 
     if [ -n "${THOM_CONTAINER_DOCKER:-}" ]; then
         start_dockerd
@@ -72,6 +76,17 @@ user_stage() {
         log "image changed ($home_id -> $image_id); re-running chezmoi install scripts"
         chezmoi state delete-bucket --bucket=entryState || true
         echo "$image_id" > "$home_dir/$marker"
+    fi
+
+    # GitHub token from the host's gh. Logging in stores it in ~/.config/gh
+    # (a tmpfs); the dotfiles already use gh as git's credential helper.
+    if [ -n "${THOM_CONTAINER_GH_TOKEN:-}" ]; then
+        local gh_token=$THOM_CONTAINER_GH_TOKEN
+        unset THOM_CONTAINER_GH_TOKEN
+        if ! printf '%s\n' "$gh_token" | gh auth login --hostname github.com --with-token; then
+            log "warning: gh auth login failed; run it by hand"
+        fi
+        unset gh_token
     fi
 
     # Link to the host's key rather than copying it into the persisted home.

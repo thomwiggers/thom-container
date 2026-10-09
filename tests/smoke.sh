@@ -48,11 +48,18 @@ stub container 'echo "container $*"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}"
 stub sysctl 'echo 10'
 stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
 stub git 'echo "git $*"'
+# Host side: `gh auth token [--user U]`. Container side: `gh auth login`
+# echoes the token it read from stdin.
+stub gh 'case "$1 $2" in
+    "auth token") [ -n "${GH_FAIL:-}" ] && exit 1; [ "${3:-}" = --user ] && echo "tok-$4" || echo tok ;;
+    "auth login") echo "gh $* stdin=$(cat)"; [ -z "${GH_FAIL:-}" ] ;;
+esac'
 stub curl 'while [ $# -gt 1 ]; do [ "$1" = -o ] && { cp "$FAKE_DOWNLOAD" "$2"; exit 0; }; shift; done; exit 22'
 command -v shasum >/dev/null || stub shasum 'sha256sum'
 
 export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm
-unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER
+unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER \
+    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN
 
 devbox() { (cd "$work/My Proj" && zsh -f "$repo/bin/devbox" "$@" 2>&1); }
 state="$work/home/.cache/thom-containers"
@@ -62,12 +69,14 @@ claude_dir=$(printf '%s' "$proj" | tr -c 'A-Za-z0-9' '-')
 echo "devbox"
 out=$(devbox)
 check "run with defaults" "$out" \
-    "container run -i -e TERM=xterm --rm --init --name dev-private-my-proj-" \
+    "container run -i -e TERM=xterm " "--rm --init --name dev-private-my-proj-" \
     "--cpus 10 --memory 8G" \
     "--volume $state/private:/home/thom" \
     "--volume $state/private/.claude/projects/$claude_dir:/home/thom/.claude/projects/-project" \
     "--volume $proj:/project --workdir /project" \
     "--tmpfs /home/thom/.ssh/sockets" \
+    "--tmpfs /home/thom/.config/gh" \
+    "-e THOM_CONTAINER_GH_TOKEN=tok " \
     "--ssh" \
     "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
     "ghcr.io/thomwiggers/thom-container:latest" \
@@ -84,10 +93,20 @@ check "profile, DIR, --docker and command" "$out" \
 out=$(RUNNING=1 devbox)
 check "attaches to running container" "$out" \
     "container exec -i -e TERM=xterm -e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock -e HOME=/home/thom --user thom --workdir /project dev-private-my-proj-" \
-    "/usr/bin/zsh -l" "!container run"
+    "/usr/bin/zsh -l" "!container run" "!THOM_CONTAINER_GH_TOKEN"
 
 out=$(SSH_AUTH_SOCK='' devbox)
 check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
+
+out=$(devbox --no-gh)
+check "--no-gh" "$out" "container run" "!THOM_CONTAINER_GH_TOKEN"
+
+out=$(THOM_CONTAINER_NO_GH=1 devbox)
+check "THOM_CONTAINER_NO_GH" "$out" "container run" "!THOM_CONTAINER_GH_TOKEN"
+
+out=$(GH_FAIL=1 devbox)
+check "host gh not logged in" "$out" \
+    "warning: 'gh auth token' failed" "container run" "!THOM_CONTAINER_GH_TOKEN"
 
 out=$(devbox -p nope) && fail "rejects unknown profile" "exit 0" \
     || check "rejects unknown profile" "$out" "unknown profile 'nope'"
@@ -134,7 +153,11 @@ sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^home_seed=.*#home_seed=$ep/seed#" \
     -e "s#^key_src=.*#key_src=$ep/key/key.txt#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
-entry() { (cd "$ep" && bash "$ep/entrypoint.sh" --user-stage echo DONE 2>&1); }
+entry() {
+    local cmd=("$@")
+    [ $# -gt 0 ] || cmd=(echo DONE)
+    (cd "$ep" && bash "$ep/entrypoint.sh" --user-stage "${cmd[@]}" 2>&1)
+}
 
 stub chezmoi 'echo "chezmoi $*"'
 out=$(entry)
@@ -158,6 +181,17 @@ check "new image, no key, offline" "$out" \
 
 out=$(THOM_CONTAINER_SKIP_APPLY=1 entry)
 check "THOM_CONTAINER_SKIP_APPLY" "$out" "DONE" "!chezmoi update"
+
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(THOM_CONTAINER_GH_TOKEN=secret entry sh -c 'echo "leak=${THOM_CONTAINER_GH_TOKEN:-none}"')
+check "logs in to GitHub, token not leaked to the shell" "$out" \
+    "gh auth login --hostname github.com --with-token stdin=secret" "leak=none"
+
+out=$(GH_FAIL=1 THOM_CONTAINER_GH_TOKEN=secret entry)
+check "gh login failure does not block start" "$out" "warning: gh auth login failed" "DONE"
+
+out=$(entry)
+check "no token, no login" "$out" "DONE" "!gh auth login"
 
 echo
 if ((failures)); then

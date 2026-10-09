@@ -30,10 +30,15 @@ to the running container.
   `~/.config/chezmoi/key.txt` exists on the host, it is mounted read-only and
   the entrypoint runs `chezmoi apply` with encrypted files included.
 - **SSH agent** is forwarded with `container run --ssh`.
+- **GitHub**: `devbox` passes the host's `gh auth token` in; the entrypoint
+  runs `gh auth login --with-token` and unsets the variable. `~/.config/gh` is
+  a tmpfs, so the token is never written to the persisted home. Pick an
+  account per profile under `[host.github_users]` in `config.toml`; skip with
+  `--no-gh`.
 - **Claude Code** per-project state: every folder is mounted at `/project`, so
   the launcher mounts `~/.claude/projects/<host path>` over
   `~/.claude/projects/-project` to keep projects apart.
-- **Ephemeral paths** (`~/.ssh/sockets`) are a fresh tmpfs per container.
+- **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs per container.
 - **On every start** the entrypoint runs `chezmoi update --force` (falls back to
   `chezmoi apply` when offline).
 - **Docker**: `--docker` adds `--cap-add ALL` and starts `dockerd`. Each Apple

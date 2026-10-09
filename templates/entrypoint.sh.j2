@@ -76,6 +76,17 @@ user_stage() {
         echo "$image_id" > "$home_dir/$marker"
     fi
 
+    # GitHub token from the host's gh. Logging in stores it in ~/.config/gh
+    # (a tmpfs); the dotfiles already use gh as git's credential helper.
+    if [ -n "${THOM_CONTAINER_GH_TOKEN:-}" ]; then
+        local gh_token=$THOM_CONTAINER_GH_TOKEN
+        unset THOM_CONTAINER_GH_TOKEN
+        if ! printf '%s\n' "$gh_token" | gh auth login --hostname github.com --with-token; then
+            log "warning: gh auth login failed; run it by hand"
+        fi
+        unset gh_token
+    fi
+
     # Link to the host's key rather than copying it into the persisted home.
     local -a apply_args=()
     local key_link="$home_dir/.config/chezmoi/key.txt"

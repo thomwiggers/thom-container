@@ -19,6 +19,13 @@ key_dir="{{ host_path(host.key_dir) }}"
 cpus=${THOM_CONTAINER_CPUS:-{{ host.cpus }}}
 memory=${THOM_CONTAINER_MEMORY:-{{ host.memory }}}
 docker=${THOM_CONTAINER_DOCKER:-}
+gh_token={{ "1" if host.gh_token else "" }}
+[[ -n ${THOM_CONTAINER_NO_GH:-} ]] && gh_token=
+typeset -A github_users=(
+{% for p, u in host.github_users.items() %}
+    {{ p }} {{ u }}
+{% endfor %}
+)
 
 usage() {
     cat <<EOF
@@ -39,6 +46,8 @@ Options:
                       otherwise download the latest release) and exit
       --docker        Grant all capabilities and start dockerd inside the
                       container (its own VM) [env: THOM_CONTAINER_DOCKER=1]
+      --no-gh         Don't pass the host's \`gh auth token\` in to log in
+                      to GitHub [env: THOM_CONTAINER_NO_GH=1]
       --image IMAGE   Image to run (default: $image) [env: THOM_CONTAINER_IMAGE]
   -h, --help          Show this help
 
@@ -97,6 +106,10 @@ while (( $# )); do
             ;;
         --docker)
             docker=1
+            shift
+            ;;
+        --no-gh)
+            gh_token=
             shift
             ;;
         --image)
@@ -191,6 +204,17 @@ if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
     run_args+=(--ssh)
 else
     print -r -- "warning: SSH_AUTH_SOCK not set; not forwarding an SSH agent" >&2
+fi
+
+# The entrypoint logs in with this and unsets it before starting the shell.
+if [[ -n $gh_token ]] && (( $+commands[gh] )); then
+    gh_args=(auth token)
+    [[ -n ${github_users[$profile]:-} ]] && gh_args+=(--user "${github_users[$profile]}")
+    if token=$(gh $gh_args 2>/dev/null) && [[ -n $token ]]; then
+        env_args+=(-e "THOM_CONTAINER_GH_TOKEN=$token")
+    else
+        print -r -- "warning: 'gh ${gh_args[*]}' failed; not logging in to GitHub" >&2
+    fi
 fi
 
 if [[ -f $key_dir/{{ container.key_file }} ]]; then

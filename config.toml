@@ -40,7 +40,9 @@ key_dir = "/run/host-chezmoi"
 key_file = "key.txt"
 # Paths under home that get a fresh tmpfs per container (e.g. ssh
 # ControlMaster sockets, which don't belong on a shared virtiofs mount).
-ephemeral = [".ssh/sockets"]
+# ~/.config/gh holds the GitHub token the entrypoint logs in with; keep it
+# in memory rather than in the persisted home.
+ephemeral = [".ssh/sockets", ".config/gh"]
 
 [claude]
 # Claude Code's per-project state, relative to home.
@@ -59,3 +61,10 @@ cpus = 0
 memory = "8G"
 # Prefix for container names: <prefix>-<profile>-<folder>-<hash>.
 name_prefix = "dev"
+# Pass the host's `gh auth token` into the container, which logs in with it.
+gh_token = true
+
+# Optional GitHub account per profile, for `gh auth token --user <name>` when
+# the host gh is logged in to several. Profiles not listed use the active one.
+[host.github_users]
+# work = "my-work-account"
