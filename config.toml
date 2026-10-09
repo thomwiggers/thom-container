@@ -38,6 +38,9 @@ project = "/project"
 key_dir = "/run/host-chezmoi"
 # File name of the key inside key_dir.
 key_file = "key.txt"
+# Read-only mount with a copy of the host's ssh known_hosts, added to ssh's
+# GlobalKnownHostsFile.
+host_ssh_dir = "/run/host-ssh"
 # Paths under home that get a fresh tmpfs per container (e.g. ssh
 # ControlMaster sockets, which don't belong on a shared virtiofs mount).
 # ~/.config/gh holds the GitHub token the entrypoint logs in with; keep it
@@ -55,6 +58,9 @@ profiles = ["private", "work"]
 default_profile = "private"
 # Host directory containing the unencrypted chezmoi age key.
 key_dir = "~/.config/chezmoi"
+# Copied (not mounted directly: that would expose ~/.ssh) to
+# <state_root>/.host-ssh on each start and mounted read-only.
+known_hosts = "~/.ssh/known_hosts"
 # Apple's container defaults to 4 CPUs / 1 GiB; that is too small for a dev box.
 # cpus = 0 means "all host CPUs".
 cpus = 0

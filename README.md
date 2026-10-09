@@ -30,7 +30,9 @@ to the running container.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/chezmoi/key.txt` exists on the host, it is mounted read-only and
   the entrypoint runs `chezmoi apply` with encrypted files included.
-- **SSH agent** is forwarded with `container run --ssh`.
+- **SSH agent** is forwarded with `container run --ssh`. The host's
+  `~/.ssh/known_hosts` is copied to `~/.cache/thom-containers/.host-ssh` on each
+  start and mounted read-only as an extra `GlobalKnownHostsFile`.
 - **Terminfo**: `devbox` sends `infocmp -x $TERM` from the host (Ghostty.app
   ships `xterm-ghostty`), and the entrypoint compiles it into `~/.terminfo`.
 - **GitHub**: `devbox` passes the host's `gh auth token` in; the entrypoint
