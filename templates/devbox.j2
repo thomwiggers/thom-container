@@ -15,6 +15,7 @@ state_root="{{ host_path(host.state_root) }}"
 key_dir="{{ host_path(host.key_dir) }}"
 cpus=${THOM_CONTAINER_CPUS:-{{ host.cpus }}}
 memory=${THOM_CONTAINER_MEMORY:-{{ host.memory }}}
+docker=${THOM_CONTAINER_DOCKER:-}
 
 usage() {
     cat <<EOF
@@ -31,6 +32,8 @@ Options:
   -p, --profile NAME  Profile to use: $profiles (default: $profile)
                       [env: THOM_CONTAINER_PROFILE]
       --pull          Pull the image before starting
+      --docker        Grant all capabilities and start dockerd inside the
+                      container (its own VM) [env: THOM_CONTAINER_DOCKER=1]
       --image IMAGE   Image to run (default: $image) [env: THOM_CONTAINER_IMAGE]
   -h, --help          Show this help
 
@@ -55,6 +58,10 @@ while [ $# -gt 0 ]; do
             ;;
         --pull)
             pull=1
+            shift
+            ;;
+        --docker)
+            docker=1
             shift
             ;;
         --image)
@@ -90,6 +97,12 @@ command -v container >/dev/null 2>&1 \
 dir=$(cd "${dir:-.}" && pwd -P) || die "cannot access folder"
 home_state="$state_root/$profile"
 mkdir -p "$home_state"
+
+# Claude Code keys per-project state (sessions, memory) on the working
+# directory, which is always {{ container.project }}. Mount the directory
+# Claude would have used for the host path over it to keep projects apart.
+claude_projects="$home_state/{{ claude.projects_dir }}/$(printf '%s' "$dir" | tr -c 'A-Za-z0-9' '-')"
+mkdir -p "$claude_projects"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
 slug=$(basename "$dir" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-24)
@@ -127,9 +140,17 @@ run_args=(
     --cpus "$cpus"
     --memory "$memory"
     --volume "$home_state:{{ container.home }}"
+    --volume "$claude_projects:{{ container.home }}/{{ claude.projects_dir }}/{{ container.project | claude_slug }}"
     --volume "$dir:{{ container.project }}"
     --workdir {{ container.project }}
+{% for d in container.ephemeral %}
+    --tmpfs {{ container.home }}/{{ d }}
+{% endfor %}
 )
+
+if [ -n "$docker" ]; then
+    run_args+=(--cap-add ALL -e THOM_CONTAINER_DOCKER=1)
+fi
 
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then
     run_args+=(--ssh)

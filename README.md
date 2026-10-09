@@ -14,6 +14,7 @@ devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
 devbox -- claude            # run a command instead of a login shell
+devbox --docker             # also start dockerd inside (grants all capabilities)
 ```
 
 Running `devbox` again for the same folder and profile attaches a new shell
@@ -26,6 +27,15 @@ to the running container.
   `~/.config/chezmoi/key.txt` exists on the host, it is mounted read-only and
   the entrypoint runs `chezmoi apply` with encrypted files included.
 - **SSH agent** is forwarded with `container run --ssh`.
+- **Claude Code** per-project state: every folder is mounted at `/project`, so
+  the launcher mounts `~/.claude/projects/<host path>` over
+  `~/.claude/projects/-project` to keep projects apart.
+- **Ephemeral paths** (`~/.ssh/sockets`) are a fresh tmpfs per container.
+- **On every start** the entrypoint runs `chezmoi update --force` (falls back to
+  `chezmoi apply` when offline).
+- **Docker**: `--docker` adds `--cap-add ALL` and starts `dockerd`. Each Apple
+  container is its own VM, so this doesn't loosen isolation from the Mac.
+  Images live on the container's root filesystem and are lost on exit.
 
 ## Layout
 

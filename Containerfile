@@ -46,6 +46,21 @@ RUN install -d -m 0755 /etc/apt/keyrings \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
+# Docker Engine for `devbox --docker`; dockerd is started by the entrypoint.
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && chmod go+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      containerd.io \
+      docker-buildx-plugin \
+      docker-ce \
+      docker-ce-cli \
+      docker-compose-plugin \
+      iptables \
+ && rm -rf /var/lib/apt/lists/*
+
 # chezmoi, system-wide so it is available before the home directory exists.
 RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
 
@@ -56,6 +71,7 @@ RUN groupadd --non-unique --gid 20 thom \
       --home-dir /home/thom --create-home thom \
  && echo 'thom ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/thom \
  && chmod 0440 /etc/sudoers.d/thom \
+ && usermod -aG docker thom \
  && install -d -o 501 -g 20 /project
 
 USER thom

@@ -12,6 +12,7 @@ state_root="$HOME/.cache/thom-containers"
 key_dir="$HOME/.config/chezmoi"
 cpus=${THOM_CONTAINER_CPUS:-0}
 memory=${THOM_CONTAINER_MEMORY:-8G}
+docker=${THOM_CONTAINER_DOCKER:-}
 
 usage() {
     cat <<EOF
@@ -28,6 +29,8 @@ Options:
   -p, --profile NAME  Profile to use: $profiles (default: $profile)
                       [env: THOM_CONTAINER_PROFILE]
       --pull          Pull the image before starting
+      --docker        Grant all capabilities and start dockerd inside the
+                      container (its own VM) [env: THOM_CONTAINER_DOCKER=1]
       --image IMAGE   Image to run (default: $image) [env: THOM_CONTAINER_IMAGE]
   -h, --help          Show this help
 
@@ -52,6 +55,10 @@ while [ $# -gt 0 ]; do
             ;;
         --pull)
             pull=1
+            shift
+            ;;
+        --docker)
+            docker=1
             shift
             ;;
         --image)
@@ -87,6 +94,12 @@ command -v container >/dev/null 2>&1 \
 dir=$(cd "${dir:-.}" && pwd -P) || die "cannot access folder"
 home_state="$state_root/$profile"
 mkdir -p "$home_state"
+
+# Claude Code keys per-project state (sessions, memory) on the working
+# directory, which is always /project. Mount the directory
+# Claude would have used for the host path over it to keep projects apart.
+claude_projects="$home_state/.claude/projects/$(printf '%s' "$dir" | tr -c 'A-Za-z0-9' '-')"
+mkdir -p "$claude_projects"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
 slug=$(basename "$dir" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-24)
@@ -124,9 +137,15 @@ run_args=(
     --cpus "$cpus"
     --memory "$memory"
     --volume "$home_state:/home/thom"
+    --volume "$claude_projects:/home/thom/.claude/projects/-project"
     --volume "$dir:/project"
     --workdir /project
+    --tmpfs /home/thom/.ssh/sockets
 )
+
+if [ -n "$docker" ]; then
+    run_args+=(--cap-add ALL -e THOM_CONTAINER_DOCKER=1)
+fi
 
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then
     run_args+=(--ssh)

@@ -22,6 +22,18 @@ root_stage() {
     # Keep gpg-agent & co. from putting sockets in the virtiofs home.
     install -d -m 0700 -o "$user_uid" -g "$user_gid" "/run/user/$user_uid"
 
+    # Per-container tmpfs mounts under home come up owned by root.
+{% for d in container.ephemeral %}
+    if [ -d "$home_dir/{{ d }}" ]; then
+        chown "$user_uid:$user_gid" "$home_dir/{{ d }}"
+        chmod 0700 "$home_dir/{{ d }}"
+    fi
+{% endfor %}
+
+    if [ -n "${THOM_CONTAINER_DOCKER:-}" ]; then
+        start_dockerd
+    fi
+
     # Apple container's --ssh mounts the agent socket owned by root.
     if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
         chown "$user_uid:$user_gid" "$SSH_AUTH_SOCK" 2>/dev/null \
@@ -32,6 +44,18 @@ root_stage() {
     exec setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
         env HOME="$home_dir" USER="$user_name" LOGNAME="$user_name" SHELL={{ user.shell }} \
         "$0" --user-stage "$@"
+}
+
+start_dockerd() {
+    # Needs the extra capabilities that `devbox --docker` grants.
+    mount -o remount,rw /sys/fs/cgroup 2>/dev/null || true
+    log "starting dockerd (log: /var/log/dockerd.log)"
+    dockerd >/var/log/dockerd.log 2>&1 &
+    for _ in $(seq 1 30); do
+        [ -S /var/run/docker.sock ] && return 0
+        sleep 0.5
+    done
+    log "warning: dockerd did not come up; see /var/log/dockerd.log"
 }
 
 user_stage() {
@@ -67,11 +91,16 @@ user_stage() {
     fi
 
     if [ -z "${THOM_CONTAINER_SKIP_APPLY:-}" ]; then
-        # Regenerate the chezmoi config (hostname, CPU count), then apply.
-        # Failures should not keep the shell from starting.
-        if ! { chezmoi init --keep-going </dev/null \
-            && chezmoi apply --keep-going "${apply_args[@]}"; }; then
-            log "warning: chezmoi failed; continuing (rerun: chezmoi apply)"
+        # Pull the dotfiles, regenerate the config (hostname, CPU count) and
+        # apply, overwriting local edits to managed files. If the pull fails
+        # (e.g. offline), still apply what we have. Failures should not keep
+        # the shell from starting.
+        if ! chezmoi update --init --force --keep-going "${apply_args[@]}" </dev/null; then
+            log "warning: chezmoi update failed; applying without pulling"
+            if ! { chezmoi init --keep-going </dev/null \
+                && chezmoi apply --force --keep-going "${apply_args[@]}" </dev/null; }; then
+                log "warning: chezmoi failed; continuing (rerun: chezmoi apply)"
+            fi
         fi
     fi
 

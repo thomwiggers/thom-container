@@ -34,6 +34,13 @@ project = "/project"
 key_dir = "/run/host-chezmoi"
 # File name of the key inside key_dir.
 key_file = "key.txt"
+# Paths under home that get a fresh tmpfs per container (e.g. ssh
+# ControlMaster sockets, which don't belong on a shared virtiofs mount).
+ephemeral = [".ssh/sockets"]
+
+[claude]
+# Claude Code's per-project state, relative to home.
+projects_dir = ".claude/projects"
 
 [host]
 # Persistent home for profile <p> lives at <state_root>/<p>.
