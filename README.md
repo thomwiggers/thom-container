@@ -7,8 +7,10 @@ Claude Code and the GitHub CLI.
 ## Usage
 
 ```sh
-ln -s "$PWD/bin/devbox" ~/.local/bin/devbox
 container registry login ghcr.io   # only if the package is private
+./install.sh                       # from a clone: symlinks bin/devbox
+# or, without a clone:
+curl -fsSL https://raw.githubusercontent.com/thomwiggers/thom-container/main/install.sh | bash
 
 devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
@@ -39,7 +41,7 @@ to the running container.
 
 ## Layout
 
-`Containerfile`, `entrypoint.sh` and `bin/devbox` are generated from
+`Containerfile`, `entrypoint.sh`, `bin/devbox` and `install.sh` are generated from
 `templates/*.j2` and `config.toml` so paths stay in sync. Edit those, then:
 
 ```sh

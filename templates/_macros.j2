@@ -1,0 +1,4 @@
+{# Expand a leading ~/ in a host path to $HOME for use inside double quotes. #}
+{% macro host_path(p) -%}
+{% if p.startswith("~/") %}$HOME/{{ p[2:] }}{% else %}{{ p }}{% endif %}
+{%- endmacro %}

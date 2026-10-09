@@ -1,0 +1,103 @@
+{% from "_macros.j2" import host_path -%}
+#!/bin/bash
+# {{ generated_header }}
+#
+# Install the devbox launcher on macOS. From a clone, `./install.sh` symlinks
+# bin/devbox (so `git pull` updates it); otherwise it downloads it:
+#
+#   curl -fsSL {{ repo.raw_url }}/install.sh | bash
+#
+# Written for macOS's stock bash 3.2.
+set -euo pipefail
+
+bin_dir=${THOM_CONTAINER_BIN_DIR:-$HOME/.local/bin}
+state_root="{{ host_path(host.state_root) }}"
+key_dir="{{ host_path(host.key_dir) }}"
+image={{ image.name }}:{{ image.tag }}
+pull=1
+
+usage() {
+    cat <<EOF
+Usage: install.sh [--no-pull]
+
+Installs devbox into $bin_dir [env: THOM_CONTAINER_BIN_DIR], starts the
+container system service and pulls $image.
+
+Options:
+      --no-pull   Don't pull the image
+  -h, --help      Show this help
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --no-pull) pull= ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "install.sh: unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+step() { printf '==> %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+
+[ "$(uname -s)" = Darwin ] || warn "devbox is meant for macOS with Apple's container"
+[ "$(uname -m)" = arm64 ] || warn "the image is built for arm64 (Apple silicon) only"
+
+if ! command -v container >/dev/null 2>&1; then
+    echo "Apple's 'container' CLI is not installed." >&2
+    echo "Get the installer from https://github.com/apple/container/releases and rerun." >&2
+    exit 1
+fi
+
+step "Installing devbox into $bin_dir"
+mkdir -p "$bin_dir"
+src_dir=
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    src_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+fi
+if [ -n "$src_dir" ] && [ -x "$src_dir/bin/devbox" ]; then
+    ln -sfn "$src_dir/bin/devbox" "$bin_dir/devbox"
+    echo "    symlinked to $src_dir/bin/devbox"
+else
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    curl -fsSL "{{ repo.raw_url }}/bin/devbox" -o "$tmp"
+    install -m 0755 "$tmp" "$bin_dir/devbox"
+    echo "    downloaded from {{ repo.raw_url }}/bin/devbox"
+fi
+
+case ":$PATH:" in
+    *":$bin_dir:"*) ;;
+    *) warn "$bin_dir is not on your PATH" ;;
+esac
+
+step "Creating persistent homes in $state_root"
+{% for p in host.profiles %}
+mkdir -p "$state_root/{{ p }}"
+{% endfor %}
+
+if [ ! -f "$key_dir/{{ container.key_file }}" ]; then
+    warn "no age key at $key_dir/{{ container.key_file }}; encrypted dotfiles will stay locked"
+fi
+
+step "Starting the container system service"
+# Explicit kernel flag: with `curl | bash`, a prompt would eat the script.
+container system status >/dev/null 2>&1 || container system start --enable-kernel-install
+
+if [ -n "$pull" ]; then
+    step "Pulling $image"
+    if ! container image pull "$image"; then
+        echo "Pull failed. If the package is private, run:" >&2
+        echo "    container registry login {{ image.name.split('/')[0] }}" >&2
+        exit 1
+    fi
+fi
+
+step "Done. Run 'devbox' in a project folder."

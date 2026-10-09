@@ -1,6 +1,10 @@
 # Single source of truth for the generated Containerfile, entrypoint and
 # launcher script. After editing, run `uv run render.py` and commit the output.
 
+[repo]
+# Where install.sh downloads the launcher from when not run from a clone.
+raw_url = "https://raw.githubusercontent.com/thomwiggers/thom-container/main"
+
 [image]
 # Registry path the launcher pulls from and CI pushes to.
 name = "ghcr.io/thomwiggers/thom-container"

@@ -1,6 +1,4 @@
-{% macro host_path(p) -%}
-{% if p.startswith("~/") %}$HOME/{{ p[2:] }}{% else %}{{ p }}{% endif %}
-{%- endmacro -%}
+{% from "_macros.j2" import host_path -%}
 #!/bin/bash
 # {{ generated_header }}
 #

@@ -20,6 +20,7 @@ OUTPUTS = {
     "Containerfile.j2": ("Containerfile", False),
     "entrypoint.sh.j2": ("entrypoint.sh", True),
     "devbox.j2": ("bin/devbox", True),
+    "install.sh.j2": ("install.sh", True),
 }
 
 
