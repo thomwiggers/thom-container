@@ -160,7 +160,7 @@ name="{{ host.name_prefix }}-$profile-$slug-$hash"
 tty_args=(-i)
 [[ -t 0 && -t 1 ]] && tty_args=(-i -t)
 
-env_args=(-e "TERM=${TERM:-xterm-256color}")
+env_args=(-e "TERM=${TERM:-xterm-256color}" -e "THOM_CONTAINER_PROFILE=$profile")
 [[ -n ${COLORTERM:-} ]] && env_args+=(-e "COLORTERM=$COLORTERM")
 
 if container inspect "$name" >/dev/null 2>&1; then

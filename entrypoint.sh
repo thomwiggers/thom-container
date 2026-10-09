@@ -86,6 +86,9 @@ user_stage() {
         echo "$image_id" > "$home_dir/$marker"
     fi
 
+    # Which devbox profile this home belongs to, for prompts and scripts.
+    export THOM_CONTAINER_PROFILE=${THOM_CONTAINER_PROFILE:-unknown}
+
     # Terminfo entry for the host terminal (base64 of `infocmp -x $TERM`).
     if [ -n "${THOM_CONTAINER_TERMINFO:-}" ]; then
         if ! printf '%s' "$THOM_CONTAINER_TERMINFO" | base64 -d \

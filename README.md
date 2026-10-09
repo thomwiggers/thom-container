@@ -26,6 +26,7 @@ to the running container.
 - **Home directory** (`/home/thom`) is persisted per profile in
   `~/.cache/thom-containers/<profile>`. On first start it is seeded from the
   image.
+  Inside, `$THOM_CONTAINER_PROFILE` says which profile is active.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/chezmoi/key.txt` exists on the host, it is mounted read-only and
   the entrypoint runs `chezmoi apply` with encrypted files included.

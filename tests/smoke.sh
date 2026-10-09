@@ -92,12 +92,12 @@ check "run with defaults" "$out" \
 
 out=$(devbox -p work --docker .. -- ls -la)
 check "profile, DIR, --docker and command" "$out" \
-    "--name dev-work-" "--volume $state/work:/home/thom" "--volume $work:/project" \
+    "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume $state/work:/home/thom" "--volume $work:/project" \
     "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "latest ls -la"
 
 out=$(RUNNING=1 devbox)
 check "attaches to running container" "$out" \
-    "container exec -i -e TERM=xterm -e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock -e HOME=/home/thom --user thom --workdir /project dev-private-my-proj-" \
+    "container exec -i -e TERM=xterm -e THOM_CONTAINER_PROFILE=private -e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock -e HOME=/home/thom --user thom --workdir /project dev-private-my-proj-" \
     "/usr/bin/zsh -l" "!container run" "!THOM_CONTAINER_GH_TOKEN" "!THOM_CONTAINER_TERMINFO"
 
 out=$(SSH_AUTH_SOCK='' devbox)
@@ -206,6 +206,14 @@ chmod 000 "$ep/seed/unreadable"
 out=$(entry)
 check "seeding error is not fatal" "$out" "seeding $ep/home" "warning: some files could not be copied" "DONE"
 chmod 600 "$ep/seed/unreadable"
+
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(THOM_CONTAINER_PROFILE=work entry sh -c 'echo "profile=$THOM_CONTAINER_PROFILE"')
+check "profile reaches the shell" "$out" "profile=work"
+
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(entry sh -c 'echo "profile=$THOM_CONTAINER_PROFILE"')
+check "profile defaults to unknown" "$out" "profile=unknown"
 
 out=$(entry)
 check "no token, no login" "$out" "DONE" "!gh auth login" "!tic"
