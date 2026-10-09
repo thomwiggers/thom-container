@@ -32,8 +32,23 @@ root_stage() {
         chmod 0700 "$home_dir/.config/gh"
     fi
 
+    if [ -n "${THOM_CONTAINER_HOSTNAME:-}" ]; then
+        if hostname "$THOM_CONTAINER_HOSTNAME" 2>/dev/null; then
+            printf '127.0.1.1\t%s\n' "$THOM_CONTAINER_HOSTNAME" >>/etc/hosts 2>/dev/null \
+                || log "warning: could not add $THOM_CONTAINER_HOSTNAME to /etc/hosts"
+        else
+            log "warning: could not set hostname to $THOM_CONTAINER_HOSTNAME"
+        fi
+    fi
+    unset THOM_CONTAINER_HOSTNAME
+
+    # The launcher only adds CAP_SYS_ADMIN for the hostname; --docker needs
+    # everything it grants.
+    local -a cap_args=()
     if [ -n "${THOM_CONTAINER_DOCKER:-}" ]; then
         start_dockerd
+    else
+        cap_args=(--bounding-set=-sys_admin)
     fi
 
     # Apple container's --ssh mounts the agent socket owned by root.
@@ -43,7 +58,7 @@ root_stage() {
             || log "warning: could not make $SSH_AUTH_SOCK accessible"
     fi
 
-    exec setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+    exec setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups "${cap_args[@]}" \
         env HOME="$home_dir" USER="$user_name" LOGNAME="$user_name" SHELL=/usr/bin/zsh \
         "$0" --user-stage "$@"
 }

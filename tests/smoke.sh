@@ -87,8 +87,10 @@ check "run with defaults" "$out" \
     "--ssh" \
     "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
     "--volume $work/home/.ssh/known_hosts:/run/host-ssh/known_hosts:ro" \
+    "--cap-add CAP_SYS_ADMIN" \
+    "-e THOM_CONTAINER_HOSTNAME=devbox-my-proj " \
     "ghcr.io/thomwiggers/thom-container:latest" \
-    "!--cap-add"
+    "!--cap-add ALL"
 [[ -d "$state/private/.claude/projects/$claude_dir" ]] \
     && pass "creates per-project Claude dir" \
     || fail "creates per-project Claude dir" "$state/private/.claude/projects/$claude_dir missing"
@@ -96,7 +98,8 @@ check "run with defaults" "$out" \
 out=$(devbox -p work --docker .. -- ls -la)
 check "profile, DIR, --docker and command" "$out" \
     "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume $state/work:/home/thom" "--volume $work:/project" \
-    "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "latest ls -la"
+    "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "!CAP_SYS_ADMIN" \
+    "-e THOM_CONTAINER_HOSTNAME=devbox-" "latest ls -la"
 
 out=$(RUNNING=1 devbox)
 check "attaches to running container" "$out" \
