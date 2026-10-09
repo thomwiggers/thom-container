@@ -35,6 +35,11 @@ RUN apt-get update \
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8
 
+# Apple's container leaves no marker such as /.dockerenv; follow the systemd
+# convention so tools (e.g. the dotfiles' Claude sandbox settings) can tell
+# they run in a container.
+ENV container=apple
+
 # GitHub CLI from the official apt repository.
 RUN install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
