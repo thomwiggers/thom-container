@@ -16,6 +16,7 @@ RUN apt-get update \
       file \
       git \
       gnupg \
+      hostname \
       less \
       locales \
       ncurses-term \

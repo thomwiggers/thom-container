@@ -45,6 +45,9 @@ to the running container.
 - **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs per container.
 - **On every start** the entrypoint runs `chezmoi update --force` (falls back to
   `chezmoi apply` when offline).
+- **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so
+  the launcher adds `CAP_SYS_ADMIN` and the entrypoint sets it, then drops
+  the capability before starting the shell.
 - **Docker**: `--docker` adds `--cap-add ALL` and starts `dockerd`. Each Apple
   container is its own VM, so this doesn't loosen isolation from the Mac.
   Images live on the container's root filesystem and are lost on exit.

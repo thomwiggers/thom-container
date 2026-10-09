@@ -198,7 +198,12 @@ run_args=(
 
 if [[ -n $docker ]]; then
     run_args+=(--cap-add ALL -e THOM_CONTAINER_DOCKER=1)
+else
+    # `container run` has no --hostname (it is the container ID), so the
+    # entrypoint sets it; that needs CAP_SYS_ADMIN, which it drops again.
+    run_args+=(--cap-add CAP_SYS_ADMIN)
 fi
+run_args+=(-e "THOM_CONTAINER_HOSTNAME=devbox${slug:+-$slug}")
 
 # Ship the host's terminfo entry so the container knows terminals Debian
 # doesn't (e.g. xterm-ghostty, which Ghostty.app provides via $TERMINFO).
