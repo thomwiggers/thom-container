@@ -16,6 +16,7 @@ profile=${THOM_CONTAINER_PROFILE:-{{ host.default_profile }}}
 profiles=({{ host.profiles | join(' ') }})
 state_root="{{ host_path(host.state_root) }}"
 key_dir="{{ host_path(host.key_dir) }}"
+known_hosts="{{ host_path(host.known_hosts) }}"
 cpus=${THOM_CONTAINER_CPUS:-{{ host.cpus }}}
 memory=${THOM_CONTAINER_MEMORY:-{{ host.memory }}}
 docker=${THOM_CONTAINER_DOCKER:-}
@@ -224,6 +225,11 @@ if [[ -n $gh_token ]] && (( $+commands[gh] )); then
     else
         print -r -- "warning: 'gh ${gh_args[*]}' failed; not logging in to GitHub" >&2
     fi
+fi
+
+# Just the file: mounting ~/.ssh would expose the private keys.
+if [[ -f $known_hosts ]]; then
+    run_args+=(--volume "$known_hosts:{{ container.host_known_hosts }}:ro")
 fi
 
 if [[ -f $key_dir/{{ container.key_file }} ]]; then

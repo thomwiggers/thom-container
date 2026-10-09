@@ -44,6 +44,8 @@ stub() {
 
 mkdir -p "$work/bin" "$work/home/.config/chezmoi" "$work/My Proj"
 : >"$work/home/.config/chezmoi/key.txt"
+mkdir -p "$work/home/.ssh"
+echo "github.com ssh-ed25519 AAAA" >"$work/home/.ssh/known_hosts"
 stub container 'echo "container $*"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; exit 0'
 stub sysctl 'echo 10'
 stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
@@ -84,6 +86,7 @@ check "run with defaults" "$out" \
     "-e THOM_CONTAINER_TERMINFO=$fake_terminfo " \
     "--ssh" \
     "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
+    "--volume $work/home/.ssh/known_hosts:/run/host-ssh/known_hosts:ro" \
     "ghcr.io/thomwiggers/thom-container:latest" \
     "!--cap-add"
 [[ -d "$state/private/.claude/projects/$claude_dir" ]] \
@@ -102,6 +105,11 @@ check "attaches to running container" "$out" \
 
 out=$(SSH_AUTH_SOCK='' devbox)
 check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
+
+mv "$work/home/.ssh/known_hosts" "$work/known_hosts.bak"
+out=$(devbox)
+check "no known_hosts on the host" "$out" "container run" "!/run/host-ssh"
+mv "$work/known_hosts.bak" "$work/home/.ssh/known_hosts"
 
 out=$(TERM=unknown-term devbox)
 check "terminal unknown to the host" "$out" "container run" "!THOM_CONTAINER_TERMINFO"

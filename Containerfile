@@ -40,6 +40,11 @@ ENV LANG=en_US.UTF-8 \
 # they run in a container.
 ENV container=apple
 
+# Also trust the host's known_hosts, which devbox mounts read-only. ssh keeps
+# adding new hosts to the container's own ~/.ssh/known_hosts.
+RUN echo 'GlobalKnownHostsFile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2 /run/host-ssh/known_hosts' \
+      > /etc/ssh/ssh_config.d/host-known-hosts.conf
+
 # GitHub CLI from the official apt repository.
 RUN install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
