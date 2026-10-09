@@ -1,2 +1,4 @@
 __pycache__/
 .ruff_cache/
+.claude/.cc-writes/
+.claude/settings.local.json
