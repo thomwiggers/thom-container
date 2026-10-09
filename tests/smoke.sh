@@ -1,0 +1,167 @@
+#!/bin/bash
+# shellcheck disable=SC2015,SC2016  # stub bodies are literal; pass/fail never fail
+# Smoke tests for the generated scripts, runnable on Linux without Apple's
+# container: `container`, `sysctl`, `git`, `curl` and `chezmoi` are replaced
+# by stubs that log their arguments.
+#
+# Usage: tests/smoke.sh   (render first: uv run render.py)
+# No -e: a failing command under test should be reported, not abort the run.
+set -uo pipefail
+
+repo=$(cd "$(dirname "$0")/.." && pwd -P)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+failures=0
+pass() { printf '  ok    %s\n' "$1"; }
+fail() {
+    printf '  FAIL  %s\n' "$1"
+    printf '%s\n' "$2" | sed 's/^/        | /'
+    failures=$((failures + 1))
+}
+# check NAME OUTPUT [!]SUBSTRING...  (a leading ! means "must not contain")
+check() {
+    local name=$1 out=$2 pat
+    shift 2
+    for pat in "$@"; do
+        if [[ $pat == !* ]]; then
+            if grep -qF -- "${pat#!}" <<<"$out"; then
+                fail "$name" "unexpected: ${pat#!}"$'\n'"$out"
+                return
+            fi
+        elif ! grep -qF -- "$pat" <<<"$out"; then
+            fail "$name" "missing: $pat"$'\n'"$out"
+            return
+        fi
+    done
+    pass "$name"
+}
+
+stub() {
+    printf '#!/bin/sh\n%s\n' "$2" >"$work/bin/$1"
+    chmod +x "$work/bin/$1"
+}
+
+mkdir -p "$work/bin" "$work/home/.config/chezmoi" "$work/My Proj"
+: >"$work/home/.config/chezmoi/key.txt"
+stub container 'echo "container $*"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; exit 0'
+stub sysctl 'echo 10'
+stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
+stub git 'echo "git $*"'
+stub curl 'while [ $# -gt 1 ]; do [ "$1" = -o ] && { cp "$FAKE_DOWNLOAD" "$2"; exit 0; }; shift; done; exit 22'
+command -v shasum >/dev/null || stub shasum 'sha256sum'
+
+export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm
+unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER
+
+devbox() { (cd "$work/My Proj" && zsh -f "$repo/bin/devbox" "$@" 2>&1); }
+state="$work/home/.cache/thom-containers"
+proj="$work/My Proj"
+claude_dir=$(printf '%s' "$proj" | tr -c 'A-Za-z0-9' '-')
+
+echo "devbox"
+out=$(devbox)
+check "run with defaults" "$out" \
+    "container run -i -e TERM=xterm --rm --init --name dev-private-my-proj-" \
+    "--cpus 10 --memory 8G" \
+    "--volume $state/private:/home/thom" \
+    "--volume $state/private/.claude/projects/$claude_dir:/home/thom/.claude/projects/-project" \
+    "--volume $proj:/project --workdir /project" \
+    "--tmpfs /home/thom/.ssh/sockets" \
+    "--ssh" \
+    "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
+    "ghcr.io/thomwiggers/thom-container:latest" \
+    "!--cap-add"
+[[ -d "$state/private/.claude/projects/$claude_dir" ]] \
+    && pass "creates per-project Claude dir" \
+    || fail "creates per-project Claude dir" "$state/private/.claude/projects/$claude_dir missing"
+
+out=$(devbox -p work --docker .. -- ls -la)
+check "profile, DIR, --docker and command" "$out" \
+    "--name dev-work-" "--volume $state/work:/home/thom" "--volume $work:/project" \
+    "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "latest ls -la"
+
+out=$(RUNNING=1 devbox)
+check "attaches to running container" "$out" \
+    "container exec -i -e TERM=xterm -e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock -e HOME=/home/thom --user thom --workdir /project dev-private-my-proj-" \
+    "/usr/bin/zsh -l" "!container run"
+
+out=$(SSH_AUTH_SOCK='' devbox)
+check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
+
+out=$(devbox -p nope) && fail "rejects unknown profile" "exit 0" \
+    || check "rejects unknown profile" "$out" "unknown profile 'nope'"
+
+out=$(devbox --bogus) && fail "rejects unknown option" "exit 0" \
+    || check "rejects unknown option" "$out" "unknown option: --bogus"
+
+out=$(devbox --self-update)
+check "self-update in a clone pulls" "$out" "Updating clone in $repo" "git -C $repo pull --ff-only"
+
+cp "$repo/bin/devbox" "$work/devbox-copy"
+printf '#!/bin/zsh -f\necho new\n' >"$work/new-devbox"
+out=$(cd "$work" && FAKE_DOWNLOAD="$work/new-devbox" zsh -f "$work/devbox-copy" --self-update 2>&1)
+check "self-update standalone replaces itself" "$out" "Updated $work/devbox-copy"
+cmp -s "$work/new-devbox" "$work/devbox-copy" \
+    && pass "standalone copy has new contents" \
+    || fail "standalone copy has new contents" "content differs"
+
+echo "install.sh"
+out=$(zsh -f "$repo/install.sh" 2>&1)
+check "install from clone" "$out" \
+    "symlinked to $repo/bin/devbox" \
+    "container system start --enable-kernel-install" \
+    "container image pull ghcr.io/thomwiggers/thom-container:latest" \
+    "!warning: devbox is meant for macOS"
+[[ $(readlink "$work/home/.local/bin/devbox") == "$repo/bin/devbox" ]] \
+    && pass "devbox symlink" || fail "devbox symlink" "$(ls -l "$work/home/.local/bin")"
+[[ -d $state/private && -d $state/work ]] \
+    && pass "profile homes created" || fail "profile homes created" "$(ls "$state")"
+
+rm -f "$work/home/.local/bin/devbox"
+out=$(cd "$work" && FAKE_DOWNLOAD="$repo/bin/devbox" zsh -f -s -- --no-pull <"$repo/install.sh" 2>&1)
+check "install piped from curl" "$out" "downloaded from" "!container image pull"
+[[ -f $work/home/.local/bin/devbox && ! -L $work/home/.local/bin/devbox ]] \
+    && pass "devbox downloaded" || fail "devbox downloaded" "$(ls -l "$work/home/.local/bin")"
+
+echo "entrypoint.sh (user stage)"
+ep="$work/ep"
+mkdir -p "$ep/home" "$ep/seed/.config" "$ep/key"
+echo img1 >"$ep/seed/.thom-container-image"
+echo seeded >"$ep/seed/file"
+echo secret >"$ep/key/key.txt"
+sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
+    -e "s#^home_seed=.*#home_seed=$ep/seed#" \
+    -e "s#^key_src=.*#key_src=$ep/key/key.txt#" \
+    "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
+entry() { (cd "$ep" && bash "$ep/entrypoint.sh" --user-stage echo DONE 2>&1); }
+
+stub chezmoi 'echo "chezmoi $*"'
+out=$(entry)
+check "first start seeds and applies with key" "$out" \
+    "seeding $ep/home" "chezmoi update --init --force --keep-going" "DONE" \
+    "!--exclude encrypted" "!delete-bucket"
+[[ $(cat "$ep/home/file") == seeded && $(readlink "$ep/home/.config/chezmoi/key.txt") == "$ep/key/key.txt" ]] \
+    && pass "home seeded, key linked" || fail "home seeded, key linked" "$(ls -la "$ep/home" "$ep/home/.config/chezmoi")"
+
+echo img2 >"$ep/seed/.thom-container-image"
+rm "$ep/key/key.txt"
+stub chezmoi 'echo "chezmoi $*"; [ "$1" = update ] && exit 1; exit 0'
+out=$(entry)
+check "new image, no key, offline" "$out" \
+    "image changed (img1 -> img2)" "chezmoi state delete-bucket --bucket=entryState" \
+    "chezmoi update --init --force --keep-going --exclude encrypted" \
+    "applying without pulling" "chezmoi apply --force --keep-going --exclude encrypted" "DONE" \
+    "!seeding"
+[[ ! -e $ep/home/.config/chezmoi/key.txt ]] \
+    && pass "stale key link removed" || fail "stale key link removed" "still there"
+
+out=$(THOM_CONTAINER_SKIP_APPLY=1 entry)
+check "THOM_CONTAINER_SKIP_APPLY" "$out" "DONE" "!chezmoi update"
+
+echo
+if ((failures)); then
+    echo "$failures check(s) failed"
+    exit 1
+fi
+echo "all checks passed"

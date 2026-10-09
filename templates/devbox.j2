@@ -1,14 +1,19 @@
 {% from "_macros.j2" import host_path -%}
-#!/bin/bash
+#!/bin/zsh -f
 # {{ generated_header }}
 #
 # Start (or attach to) a development container for a folder, using Apple's
-# `container` CLI. Written for macOS's stock bash 3.2.
-set -euo pipefail
+# `container` CLI. zsh because it is what macOS ships; -f skips rc files.
+setopt err_exit no_unset pipe_fail
+
+prog=${0:t}
+# Absolute path with symlinks resolved; $0 means the function name inside
+# functions, so capture it here.
+self=${0:A}
 
 image=${THOM_CONTAINER_IMAGE:-{{ image.name }}:{{ image.tag }}}
 profile=${THOM_CONTAINER_PROFILE:-{{ host.default_profile }}}
-profiles="{{ host.profiles | join(' ') }}"
+profiles=({{ host.profiles | join(' ') }})
 state_root="{{ host_path(host.state_root) }}"
 key_dir="{{ host_path(host.key_dir) }}"
 cpus=${THOM_CONTAINER_CPUS:-{{ host.cpus }}}
@@ -17,7 +22,7 @@ docker=${THOM_CONTAINER_DOCKER:-}
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [options] [DIR] [-- COMMAND...]
+Usage: $prog [options] [DIR] [-- COMMAND...]
 
 Start a container with DIR (default: current directory) mounted at
 {{ container.project }}. If a container for DIR and the profile is already
@@ -27,7 +32,7 @@ The home directory {{ container.home }} is persisted per profile in
 $state_root/<profile>.
 
 Options:
-  -p, --profile NAME  Profile to use: $profiles (default: $profile)
+  -p, --profile NAME  Profile to use: ${profiles[*]} (default: $profile)
                       [env: THOM_CONTAINER_PROFILE]
       --pull          Pull the image before starting
       --self-update   Update this script (git pull if it lives in a clone,
@@ -43,53 +48,42 @@ EOF
 }
 
 die() {
-    echo "$(basename "$0"): $*" >&2
+    print -r -- "$prog: $*" >&2
     exit 1
 }
 
-# Resolve symlinks by hand: macOS < 12.3 readlink has no -f.
-resolve_self() {
-    local path=$1 link
-    while link=$(readlink "$path"); do
-        case $link in
-            /*) path=$link ;;
-            *) path=$(dirname "$path")/$link ;;
-        esac
-    done
-    (cd "$(dirname "$path")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$path")")
-}
-
 self_update() {
-    local self repo
-    self=$(resolve_self "$0")
-    repo=$(dirname "$(dirname "$self")")
-    if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "Updating clone in $repo"
+    local repo=${self:h:h} tmp
+    # Only when bin/devbox sits in a clone of this repo, not in any repo
+    # that happens to contain ~/.local.
+    if [[ -e $repo/.git && -f $repo/templates/devbox.j2 ]]; then
+        print -r -- "Updating clone in $repo"
         git -C "$repo" pull --ff-only
         return
     fi
-    # Global, not local: the EXIT trap runs after this function returns.
     tmp=$(mktemp)
-    trap 'rm -f "$tmp"' EXIT
-    echo "Downloading {{ repo.raw_url }}/bin/devbox"
+    # In zsh, a function's EXIT trap fires as it returns, after its locals
+    # are gone: expand the path now.
+    trap "rm -f ${(q)tmp}" EXIT
+    print -r -- "Downloading {{ repo.raw_url }}/bin/devbox"
     curl -fsSL "{{ repo.raw_url }}/bin/devbox" -o "$tmp"
-    bash -n "$tmp" || die "downloaded script does not parse; not replacing $self"
+    zsh -n "$tmp" || die "downloaded script does not parse; not replacing $self"
     if cmp -s "$tmp" "$self"; then
-        echo "Already up to date: $self"
+        print -r -- "Already up to date: $self"
         return
     fi
     # Replace via rename so the running copy isn't modified in place.
     install -m 0755 "$tmp" "$self.new"
     mv -f "$self.new" "$self"
-    echo "Updated $self"
+    print -r -- "Updated $self"
 }
 
 pull=
 dir=
-while [ $# -gt 0 ]; do
+while (( $# )); do
     case $1 in
         -p | --profile)
-            [ $# -ge 2 ] || die "$1 needs an argument"
+            (( $# >= 2 )) || die "$1 needs an argument"
             profile=$2
             shift 2
             ;;
@@ -106,7 +100,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --image)
-            [ $# -ge 2 ] || die "$1 needs an argument"
+            (( $# >= 2 )) || die "$1 needs an argument"
             image=$2
             shift 2
             ;;
@@ -120,58 +114,58 @@ while [ $# -gt 0 ]; do
             ;;
         -*) die "unknown option: $1 (see --help)" ;;
         *)
-            [ -z "$dir" ] || die "only one DIR may be given"
+            [[ -z $dir ]] || die "only one DIR may be given"
             dir=$1
             shift
             ;;
     esac
 done
 
-case " $profiles " in
-    *" $profile "*) ;;
-    *) die "unknown profile '$profile' (known: $profiles; add it to config.toml)" ;;
-esac
+(( ${profiles[(Ie)$profile]} )) \
+    || die "unknown profile '$profile' (known: ${profiles[*]}; add it to config.toml)"
 
-command -v container >/dev/null 2>&1 \
+(( $+commands[container] )) \
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
-dir=$(cd "${dir:-.}" && pwd -P) || die "cannot access folder"
+[[ -d ${dir:-.} ]] || die "cannot access folder: $dir"
+dir=${${dir:-.}:A}
 home_state="$state_root/$profile"
 mkdir -p "$home_state"
 
 # Claude Code keys per-project state (sessions, memory) on the working
 # directory, which is always {{ container.project }}. Mount the directory
 # Claude would have used for the host path over it to keep projects apart.
-claude_projects="$home_state/{{ claude.projects_dir }}/$(printf '%s' "$dir" | tr -c 'A-Za-z0-9' '-')"
+claude_projects="$home_state/{{ claude.projects_dir }}/${dir//[^A-Za-z0-9]/-}"
 mkdir -p "$claude_projects"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
-slug=$(basename "$dir" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-24)
-hash=$(printf '%s' "$dir" | shasum -a 256 | cut -c1-8)
-name="{{ host.name_prefix }}-$profile-${slug%-}-$hash"
+slug=${${(L)dir:t}//[^a-z0-9-]/-}
+slug=${${slug[1,24]}%-}
+hash=$(print -rn -- "$dir" | shasum -a 256 | cut -c1-8)
+name="{{ host.name_prefix }}-$profile-$slug-$hash"
 
 tty_args=(-i)
-[ -t 0 ] && [ -t 1 ] && tty_args=(-i -t)
+[[ -t 0 && -t 1 ]] && tty_args=(-i -t)
 
 env_args=(-e "TERM=${TERM:-xterm-256color}")
-[ -n "${COLORTERM:-}" ] && env_args+=(-e "COLORTERM=$COLORTERM")
+[[ -n ${COLORTERM:-} ]] && env_args+=(-e "COLORTERM=$COLORTERM")
 
 if container inspect "$name" >/dev/null 2>&1; then
-    [ $# -gt 0 ] || set -- {{ user.shell }} -l
-    if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+    (( $# )) || set -- {{ user.shell }} -l
+    if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
         env_args+=(-e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock)
     fi
-    exec container exec "${tty_args[@]}" "${env_args[@]}" \
+    exec container exec $tty_args $env_args \
         -e HOME={{ container.home }} \
         --user {{ user.name }} --workdir {{ container.project }} \
         "$name" "$@"
 fi
 
-if [ -n "$pull" ]; then
+if [[ -n $pull ]]; then
     container image pull "$image"
 fi
 
-if [ "$cpus" = 0 ]; then
+if [[ $cpus == 0 ]]; then
     cpus=$(sysctl -n hw.ncpu)
 fi
 
@@ -189,20 +183,20 @@ run_args=(
 {% endfor %}
 )
 
-if [ -n "$docker" ]; then
+if [[ -n $docker ]]; then
     run_args+=(--cap-add ALL -e THOM_CONTAINER_DOCKER=1)
 fi
 
-if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
     run_args+=(--ssh)
 else
-    echo "warning: SSH_AUTH_SOCK not set; not forwarding an SSH agent" >&2
+    print -r -- "warning: SSH_AUTH_SOCK not set; not forwarding an SSH agent" >&2
 fi
 
-if [ -f "$key_dir/{{ container.key_file }}" ]; then
+if [[ -f $key_dir/{{ container.key_file }} ]]; then
     run_args+=(--volume "$key_dir:{{ container.key_dir }}:ro")
 else
-    echo "warning: no age key at $key_dir/{{ container.key_file }}; encrypted dotfiles stay locked" >&2
+    print -r -- "warning: no age key at $key_dir/{{ container.key_file }}; encrypted dotfiles stay locked" >&2
 fi
 
-exec container run "${tty_args[@]}" "${env_args[@]}" "${run_args[@]}" "$image" "$@"
+exec container run $tty_args $env_args $run_args "$image" "$@"

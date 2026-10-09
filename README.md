@@ -10,7 +10,7 @@ Claude Code and the GitHub CLI.
 container registry login ghcr.io   # only if the package is private
 ./install.sh                       # from a clone: symlinks bin/devbox
 # or, without a clone:
-curl -fsSL https://raw.githubusercontent.com/thomwiggers/thom-container/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/thomwiggers/thom-container/main/install.sh | zsh
 
 devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
@@ -48,6 +48,7 @@ to the running container.
 ```sh
 uv run render.py          # regenerate
 uv run render.py --check  # what CI runs
+tests/smoke.sh            # stub-based tests of the scripts
 ```
 
 Local build: `container build -f Containerfile -t ghcr.io/thomwiggers/thom-container:latest .`

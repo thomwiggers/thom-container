@@ -25,8 +25,15 @@ jobs:
         run: |
           uvx ruff check render.py
           uvx ruff format --check render.py
-      - name: ShellCheck
-        run: shellcheck bin/devbox entrypoint.sh install.sh
+      - name: Install zsh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+      - name: Lint scripts
+        run: |
+          shellcheck entrypoint.sh tests/smoke.sh
+          zsh -n bin/devbox
+          zsh -n install.sh
+      - name: Smoke tests
+        run: tests/smoke.sh
 
   build:
     needs: lint
