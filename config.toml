@@ -58,8 +58,7 @@ profiles = ["private", "work"]
 default_profile = "private"
 # Host directory containing the unencrypted chezmoi age key.
 key_dir = "~/.config/chezmoi"
-# Mounted on its own (single-file mounts need container >= 0.12.0); mounting
-# ~/.ssh would expose the private keys.
+# Mounted on its own; mounting ~/.ssh would expose the private keys.
 known_hosts = "~/.ssh/known_hosts"
 # Apple's container defaults to 4 CPUs / 1 GiB; that is too small for a dev box.
 # cpus = 0 means "all host CPUs".
