@@ -1,0 +1,80 @@
+#!/bin/bash
+# {{ generated_header }}
+#
+# Runs as root: seeds the persistent home directory, fixes up the forwarded
+# SSH agent socket, then re-executes itself as {{ user.name }} to finish the
+# dotfiles install and exec the requested command.
+set -euo pipefail
+
+user_name={{ user.name }}
+user_uid={{ user.uid }}
+user_gid={{ user.gid }}
+home_dir={{ container.home }}
+home_seed={{ container.home_seed }}
+key_src={{ container.key_dir }}/{{ container.key_file }}
+marker=.thom-container-image
+
+log() { echo "entrypoint: $*" >&2; }
+
+root_stage() {
+    if [ ! -e "$home_dir/$marker" ]; then
+        log "seeding $home_dir from image (existing files are kept)"
+        cp -a --update=none "$home_seed/." "$home_dir/"
+    fi
+    chown "$user_uid:$user_gid" "$home_dir" 2>/dev/null || true
+
+    # Apple container's --ssh mounts the agent socket owned by root.
+    if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+        chown "$user_uid:$user_gid" "$SSH_AUTH_SOCK" 2>/dev/null \
+            || chmod 0666 "$SSH_AUTH_SOCK" 2>/dev/null \
+            || log "warning: could not make $SSH_AUTH_SOCK accessible"
+    fi
+
+    exec setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+        env HOME="$home_dir" USER="$user_name" LOGNAME="$user_name" SHELL={{ user.shell }} \
+        "$0" --user-stage "$@"
+}
+
+user_stage() {
+    local image_id home_id
+    image_id=$(cat "$home_seed/$marker" 2>/dev/null || echo unknown)
+    home_id=$(cat "$home_dir/$marker" 2>/dev/null || echo none)
+    if [ "$image_id" != "$home_id" ]; then
+        # New image: Homebrew under /home/linuxbrew came from the image, so
+        # forget which run_onchange_ scripts ran and let them reconcile.
+        log "image changed ($home_id -> $image_id); re-running chezmoi install scripts"
+        chezmoi state delete-bucket --bucket=entryState || true
+        echo "$image_id" > "$home_dir/$marker"
+    fi
+
+    local -a apply_args=()
+    if [ -f "$key_src" ]; then
+        mkdir -p "$home_dir/.config/chezmoi"
+        install -m 0600 "$key_src" "$home_dir/.config/chezmoi/key.txt"
+    elif [ ! -f "$home_dir/.config/chezmoi/key.txt" ]; then
+        log "no age key at $key_src; skipping encrypted dotfiles"
+        # Must be two separate words: the dotfiles' decrypt script looks for
+        # the literal string "--exclude encrypted".
+        apply_args=(--exclude encrypted)
+    fi
+
+    if [ -z "${THOM_CONTAINER_SKIP_APPLY:-}" ]; then
+        # Regenerate the chezmoi config (hostname, CPU count), then apply.
+        # Failures should not keep the shell from starting.
+        if ! { chezmoi init --keep-going </dev/null \
+            && chezmoi apply --keep-going "${apply_args[@]}"; }; then
+            log "warning: chezmoi failed; continuing (rerun: chezmoi apply)"
+        fi
+    fi
+
+    exec "$@"
+}
+
+if [ "${1:-}" = "--user-stage" ]; then
+    shift
+    user_stage "$@"
+elif [ "$(id -u)" = 0 ]; then
+    root_stage "$@"
+else
+    user_stage "$@"
+fi

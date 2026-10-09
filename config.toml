@@ -1,0 +1,50 @@
+# Single source of truth for the generated Containerfile, entrypoint and
+# launcher script. After editing, run `uv run render.py` and commit the output.
+
+[image]
+# Registry path the launcher pulls from and CI pushes to.
+name = "ghcr.io/thomwiggers/thom-container"
+tag = "latest"
+# Debian 13
+base = "debian:trixie"
+
+[user]
+name = "thom"
+# Match the macOS host user (first user is uid 501, group "staff" is gid 20)
+# so files in bind mounts line up.
+uid = 501
+gid = 20
+shell = "/usr/bin/zsh"
+
+[dotfiles]
+repo = "https://github.com/thomwiggers/chezmoi-dotfiles.git"
+# Holds the `packages.brew` list; the Homebrew image layer is cached on its
+# contents.
+data_url = "https://raw.githubusercontent.com/thomwiggers/chezmoi-dotfiles/main/.chezmoidata.toml"
+
+[container]
+# The whole home directory is persisted on the host, per profile.
+home = "/home/thom"
+# Pristine copy of the home directory baked into the image; used to seed an
+# empty persistent home on first start.
+home_seed = "/opt/home-seed"
+# Where the launcher mounts the folder it was started in.
+project = "/project"
+# Read-only mount of the host directory holding the unencrypted age key.
+key_dir = "/run/host-chezmoi"
+# File name of the key inside key_dir.
+key_file = "key.txt"
+
+[host]
+# Persistent home for profile <p> lives at <state_root>/<p>.
+state_root = "~/.cache/thom-containers"
+profiles = ["private", "work"]
+default_profile = "private"
+# Host directory containing the unencrypted chezmoi age key.
+key_dir = "~/.config/chezmoi"
+# Apple's container defaults to 4 CPUs / 1 GiB; that is too small for a dev box.
+# cpus = 0 means "all host CPUs".
+cpus = 0
+memory = "8G"
+# Prefix for container names: <prefix>-<profile>-<folder>-<hash>.
+name_prefix = "dev"
