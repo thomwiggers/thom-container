@@ -148,6 +148,7 @@ ep="$work/ep"
 mkdir -p "$ep/home" "$ep/seed/.config" "$ep/key"
 echo img1 >"$ep/seed/.thom-container-image"
 echo seeded >"$ep/seed/file"
+echo hidden >"$ep/seed/.hidden"
 echo secret >"$ep/key/key.txt"
 sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^home_seed=.*#home_seed=$ep/seed#" \
@@ -164,7 +165,7 @@ out=$(entry)
 check "first start seeds and applies with key" "$out" \
     "seeding $ep/home" "chezmoi update --init --force --keep-going" "DONE" \
     "!--exclude encrypted" "!delete-bucket"
-[[ $(cat "$ep/home/file") == seeded && $(readlink "$ep/home/.config/chezmoi/key.txt") == "$ep/key/key.txt" ]] \
+[[ $(cat "$ep/home/file") == seeded && $(cat "$ep/home/.hidden") == hidden && $(readlink "$ep/home/.config/chezmoi/key.txt") == "$ep/key/key.txt" ]] \
     && pass "home seeded, key linked" || fail "home seeded, key linked" "$(ls -la "$ep/home" "$ep/home/.config/chezmoi")"
 
 echo img2 >"$ep/seed/.thom-container-image"
@@ -189,6 +190,14 @@ check "logs in to GitHub, token not leaked to the shell" "$out" \
 
 out=$(GH_FAIL=1 THOM_CONTAINER_GH_TOKEN=secret entry)
 check "gh login failure does not block start" "$out" "warning: gh auth login failed" "DONE"
+
+# A copy error (here: an unreadable file) must warn, not stop the start.
+rm "$ep/home/.thom-container-image"
+echo nope >"$ep/seed/unreadable"
+chmod 000 "$ep/seed/unreadable"
+out=$(entry)
+check "seeding error is not fatal" "$out" "seeding $ep/home" "warning: some files could not be copied" "DONE"
+chmod 600 "$ep/seed/unreadable"
 
 out=$(entry)
 check "no token, no login" "$out" "DONE" "!gh auth login"

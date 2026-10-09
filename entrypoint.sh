@@ -65,7 +65,15 @@ user_stage() {
     if [ ! -e "$home_dir/$marker" ]; then
         # As the user, so the copy works on a mount that refuses chown.
         log "seeding $home_dir from image (existing files are kept)"
-        cp -a --update=none "$home_seed/." "$home_dir/"
+        # Copy the entries, not "$home_seed/.": that would also copy the
+        # seed's times and mode onto the home mount point, which the user
+        # doesn't own. Attribute errors on dirs the runtime created for
+        # nested mounts (e.g. ~/.ssh) shouldn't stop the container either.
+        (
+            shopt -s dotglob nullglob
+            set -- "$home_seed"/*
+            [ $# -eq 0 ] || cp -a --update=none "$@" "$home_dir/"
+        ) || log "warning: some files could not be copied completely; continuing"
     fi
 
     image_id=$(cat "$home_seed/$marker" 2>/dev/null || echo unknown)
