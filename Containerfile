@@ -72,6 +72,19 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings
       iptables \
  && rm -rf /var/lib/apt/lists/*
 
+# Browsers and drivers for Selenium. Chrome for Testing, which Selenium
+# Manager downloads, has no linux-arm64 builds; Debian's chromedriver is on
+# PATH, where Selenium Manager looks first. Firefox's geckodriver is left to
+# Selenium Manager. fonts-liberation (metric-compatible Arial, Times, Courier)
+# is only a recommendation, so name it explicitly.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      chromium \
+      chromium-driver \
+      firefox-esr \
+      fonts-liberation \
+ && rm -rf /var/lib/apt/lists/*
+
 # chezmoi, system-wide so it is available before the home directory exists.
 RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
 
