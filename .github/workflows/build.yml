@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Weekly rebuild to pick up Debian, Homebrew and Claude Code updates.
+    # Weekly rebuild to pick up Debian, nixpkgs and Claude Code updates.
     - cron: "17 4 * * 1"
   workflow_dispatch:
 
@@ -87,7 +87,7 @@ jobs:
             DOTFILES_REV=${{ steps.inputs.outputs.dotfiles_rev }}
             CLAUDE_CACHE_BUST=${{ steps.inputs.outputs.claude_cache_bust }}
             IMAGE_ID=${{ github.sha }}-${{ github.run_id }}
-          # Registry cache: the Homebrew layer is too large and too slow to
+          # Registry cache: the Home Manager layer is too large and too slow to
           # rebuild to trust to the 10 GB, evict-on-pressure GHA cache.
           cache-from: type=registry,ref=${{ steps.inputs.outputs.image }}:buildcache
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:buildcache,mode=max', steps.inputs.outputs.image) || '' }}

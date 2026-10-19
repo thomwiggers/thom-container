@@ -14,7 +14,7 @@ image=${THOM_CONTAINER_IMAGE:-ghcr.io/thomwiggers/thom-container:latest}
 profile=${THOM_CONTAINER_PROFILE:-private}
 profiles=(private work)
 state_root="$HOME/.cache/thom-containers"
-key_dir="$HOME/.config/chezmoi"
+key_dir="$HOME/.config/age"
 known_hosts="$HOME/.ssh/known_hosts"
 cpus=${THOM_CONTAINER_CPUS:-0}
 memory=${THOM_CONTAINER_MEMORY:-8G}
@@ -236,10 +236,10 @@ if [[ -f $known_hosts ]]; then
     run_args+=(--volume "$known_hosts:/run/host-ssh/known_hosts:ro")
 fi
 
-if [[ -f $key_dir/key.txt ]]; then
-    run_args+=(--volume "$key_dir:/run/host-chezmoi:ro")
+if [[ -f $key_dir/keys.txt ]]; then
+    run_args+=(--volume "$key_dir:/run/host-age:ro")
 else
-    print -r -- "warning: no age key at $key_dir/key.txt; encrypted dotfiles stay locked" >&2
+    print -r -- "warning: no age key at $key_dir/keys.txt; encrypted dotfiles stay locked" >&2
 fi
 
 exec container run $tty_args $env_args $run_args "$image" "$@"

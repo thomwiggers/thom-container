@@ -21,10 +21,12 @@ gid = 20
 shell = "/usr/bin/zsh"
 
 [dotfiles]
+# Nix flake with standalone Home Manager.
 repo = "https://github.com/thomwiggers/chezmoi-dotfiles.git"
-# Holds the `packages.brew` list; the Homebrew image layer is cached on its
-# contents.
-data_url = "https://raw.githubusercontent.com/thomwiggers/chezmoi-dotfiles/main/.chezmoidata.toml"
+# Checkout of the flake, relative to home (where `home-manager` looks).
+dir = ".config/home-manager"
+# homeConfigurations entry: <user>@<role>, here aarch64 Linux in a container.
+config = "thom@linux-arm"
 
 [container]
 # The whole home directory is persisted on the host, per profile.
@@ -34,10 +36,15 @@ home = "/home/thom"
 home_seed = "/opt/home-seed"
 # Where the launcher mounts the folder it was started in.
 project = "/project"
+# Nix state under home that points into /nix/store, which comes from the
+# image. When the image changes, these are replaced by the image's copies.
+nix_state = [".nix-profile", ".nix-defexpr", ".local/state/nix", ".local/state/home-manager"]
 # Read-only mount of the host directory holding the unencrypted age key.
-key_dir = "/run/host-chezmoi"
+key_dir = "/run/host-age"
 # File name of the key inside key_dir.
-key_file = "key.txt"
+key_file = "keys.txt"
+# Where the dotfiles' secrets module looks for it, relative to home.
+key_link = ".config/age/keys.txt"
 # Read-only mount of the host's ssh known_hosts, added to ssh's
 # GlobalKnownHostsFile. Not ~/.ssh/known_hosts, which must stay writable.
 host_known_hosts = "/run/host-ssh/known_hosts"
@@ -56,8 +63,8 @@ projects_dir = ".claude/projects"
 state_root = "~/.cache/thom-containers"
 profiles = ["private", "work"]
 default_profile = "private"
-# Host directory containing the unencrypted chezmoi age key.
-key_dir = "~/.config/chezmoi"
+# Host directory containing the unencrypted age key.
+key_dir = "~/.config/age"
 # Mounted on its own; mounting ~/.ssh would expose the private keys.
 known_hosts = "~/.ssh/known_hosts"
 # Apple's container defaults to 4 CPUs / 1 GiB; that is too small for a dev box.

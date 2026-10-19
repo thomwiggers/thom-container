@@ -22,21 +22,21 @@ for new settings.
 
 ## Testing
 
-`tests/smoke.sh` stubs `container`, `chezmoi`, etc. (see the `smoke-test`
+`tests/smoke.sh` stubs `container`, `nix`, etc. (see the `smoke-test`
 skill). Nothing here can run Apple's runtime or the entrypoint's root
 stage; the image only builds in CI (`ubuntu-24.04-arm`, ~5 min). Say what
 was not tested.
 
 ## Gotchas
 
-- The dotfiles' decrypt script checks `.chezmoi.args` for the literal
-  `--exclude encrypted` (two words); without the key, chezmoi must get it
-  in that form or it prompts for a passphrase.
+- The image's `/nix` holds the store; home only has links into it. On an
+  image change the entrypoint swaps `container.nix_state` for the image's
+  copies, or `nix` itself would be a dangling `~/.nix-profile/bin` link.
 - Every project is mounted at `/project`, so the launcher mounts
   `~/.claude/projects/<host path slug>` over `~/.claude/projects/-project`
   to keep Claude's per-project state apart.
-- chezmoi and zsh both replace symlinked target files rather than writing
-  through them; persist directories, not single files.
+- zsh replaces symlinked target files rather than writing through them;
+  persist directories, not single files.
 - `astral-sh/setup-uv` has no floating major tags (`@v10` fails); pin the
   full version. Other actions do have `@vN`.
 - Docker actions and GitHub's own actions are on Node 24 majors; check

@@ -5,9 +5,8 @@ FROM {{ image.base }}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Base system. build-essential/procps/curl/file/git are what the dotfiles'
-# Debian bootstrap needs for Homebrew; util-linux(-extra) provides lscpu,
-# which the chezmoi config template calls.
+# Base system. curl, git and xz-utils are what the Nix installer and the
+# dotfiles checkout need; everything else comes from Home Manager.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential \
@@ -26,7 +25,6 @@ RUN apt-get update \
       sudo \
       unzip \
       util-linux \
-      util-linux-extra \
       wget \
       xz-utils \
       zsh \
@@ -85,48 +83,38 @@ RUN apt-get update \
       fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 
-# chezmoi, system-wide so it is available before the home directory exists.
-RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
-
-# Unprivileged user matching the macOS host uid/gid. Homebrew refuses to run
-# as root, and the dotfiles bootstrap calls `sudo apt-get`.
+# Unprivileged user matching the macOS host uid/gid, with passwordless sudo.
+# /nix is owned by the user: single-user Nix, no daemon.
 RUN groupadd --non-unique --gid {{ user.gid }} {{ user.name }} \
  && useradd --uid {{ user.uid }} --gid {{ user.gid }} --shell {{ user.shell }} \
       --home-dir {{ container.home }} --create-home {{ user.name }} \
  && echo '{{ user.name }} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/{{ user.name }} \
  && chmod 0440 /etc/sudoers.d/{{ user.name }} \
  && usermod -aG docker {{ user.name }} \
- && install -d -o {{ user.uid }} -g {{ user.gid }} {{ container.project }}
+ && install -d -o {{ user.uid }} -g {{ user.gid }} /nix {{ container.project }}
 
 USER {{ user.name }}
 WORKDIR {{ container.home }}
-ENV PATH={{ container.home }}/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
+# The Nix installer wants $USER; ~/.nix-profile/bin is where nix lives.
+ENV USER={{ user.name }} \
+    PATH={{ container.home }}/.nix-profile/bin:{{ container.home }}/.local/bin:$PATH
 
-ENV HOMEBREW_NO_ANALYTICS=1 \
-    HOMEBREW_NO_AUTO_UPDATE=1 \
-    HOMEBREW_NO_ENV_HINTS=1 \
-    HOMEBREW_NO_INSTALL_CLEANUP=1
+# Nix has no build sandbox here: unprivileged user namespaces are not
+# available while building the image or in the container.
+RUN install -d ~/.config/nix \
+ && printf 'experimental-features = nix-command flakes\nsandbox = false\n' > ~/.config/nix/nix.conf \
+ && curl -fsSL https://nixos.org/nix/install | sh -s -- --no-daemon \
+ && nix --version
 
-# Homebrew and the dotfiles' brew packages in their own layer, so the slow
-# (on arm64 Linux largely from-source) install is only redone when the package
-# list changes. BuildKit caches `ADD <url>` by content checksum, so this layer
-# is invalidated by edits to the data file, not by other dotfiles commits.
-RUN NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
- && brew --version
-ADD --chown={{ user.uid }}:{{ user.gid }} {{ dotfiles.data_url }} /tmp/chezmoidata.toml
-RUN mapfile -t formulae < <(awk '/^brew = \[/ {f=1; next} f && /^\]/ {f=0} f' /tmp/chezmoidata.toml | tr -d ' ",') \
- && echo "installing: ${formulae[*]}" \
- && brew install --formula "${formulae[@]}" \
- && rm -rf "$(brew --cache)" /tmp/chezmoidata.toml
-
-# Dotfiles without the age key: `--exclude encrypted` (space-separated, as the
-# dotfiles' decrypt script greps for it) skips the passphrase prompt.
-# Its Homebrew bootstrap finds everything above already installed.
-# DOTFILES_REV busts the cache when the dotfiles repository changes.
+# Dotfiles built without the age key: the secrets module skips decryption
+# when ~/.config/age/keys.txt is missing. `-b` moves aside the skeleton files
+# useradd created. DOTFILES_REV busts the cache when the dotfiles repository
+# changes.
 ARG DOTFILES_REV=unknown
 RUN echo "dotfiles rev: ${DOTFILES_REV}" \
- && chezmoi init --apply --exclude encrypted {{ dotfiles.repo }} \
- && rm -rf "$(brew --cache)"
+ && git clone {{ dotfiles.repo }} "$HOME/{{ dotfiles.dir }}" \
+ && nix run "$HOME/{{ dotfiles.dir }}#home-manager" -- switch \
+      --flake "$HOME/{{ dotfiles.dir }}#{{ dotfiles.config }}" -b hm-bak
 
 # Claude Code, native installer. CLAUDE_CACHE_BUST lets CI pick up new
 # releases without rebuilding the (slow) dotfiles layer.

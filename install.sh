@@ -11,7 +11,7 @@ setopt err_exit no_unset pipe_fail
 
 bin_dir=${THOM_CONTAINER_BIN_DIR:-$HOME/.local/bin}
 state_root="$HOME/.cache/thom-containers"
-key_dir="$HOME/.config/chezmoi"
+key_dir="$HOME/.config/age"
 image=ghcr.io/thomwiggers/thom-container:latest
 pull=1
 
@@ -82,8 +82,8 @@ step "Creating persistent homes in $state_root"
 mkdir -p "$state_root/private"
 mkdir -p "$state_root/work"
 
-if [ ! -f "$key_dir/key.txt" ]; then
-    warn "no age key at $key_dir/key.txt; encrypted dotfiles will stay locked"
+if [ ! -f "$key_dir/keys.txt" ]; then
+    warn "no age key at $key_dir/keys.txt; encrypted dotfiles will stay locked"
 fi
 
 step "Starting the container system service"

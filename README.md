@@ -1,8 +1,8 @@
 # thom-container
 
 Debian 13 development container for [Apple's `container`](https://github.com/apple/container),
-with [my dotfiles](https://github.com/thomwiggers/chezmoi-dotfiles), Homebrew,
-Claude Code and the GitHub CLI.
+with [my dotfiles](https://github.com/thomwiggers/chezmoi-dotfiles) (Nix and
+Home Manager), Claude Code and the GitHub CLI.
 
 ## Usage
 
@@ -28,8 +28,9 @@ to the running container.
   image.
   Inside, `$THOM_CONTAINER_PROFILE` says which profile is active.
 - **Dotfiles**: the image is built without the age key. When
-  `~/.config/chezmoi/key.txt` exists on the host, it is mounted read-only and
-  the entrypoint runs `chezmoi apply` with encrypted files included.
+  `~/.config/age/keys.txt` exists on the host, it is mounted read-only and
+  linked to the same path in the container, so the switch decrypts the
+  secrets. The flake is checked out at `~/.config/home-manager`.
 - **SSH agent** is forwarded with `container run --ssh`. The host's
   `~/.ssh/known_hosts` is mounted read-only as an extra `GlobalKnownHostsFile`.
 - **Terminfo**: `devbox` sends `infocmp -x $TERM` from the host (Ghostty.app
@@ -43,8 +44,10 @@ to the running container.
   the launcher mounts `~/.claude/projects/<host path>` over
   `~/.claude/projects/-project` to keep projects apart.
 - **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs per container.
-- **On every start** the entrypoint runs `chezmoi update --force` (falls back to
-  `chezmoi apply` when offline).
+- **On every start** the entrypoint pulls the dotfiles and runs
+  `home-manager switch` (with `--offline` when the pull fails). When the image
+  has changed, the Nix profile links in the persisted home are first replaced
+  by the image's.
 - **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so
   the launcher adds `CAP_SYS_ADMIN` and the entrypoint sets it, then drops
   the capability before starting the shell.
@@ -69,6 +72,5 @@ Local build: `container build -f Containerfile -t ghcr.io/thomwiggers/thom-conta
 
 `.github/workflows/build.yml` builds `linux/arm64` natively and pushes to
 `ghcr.io/thomwiggers/thom-container` on `main`, weekly, and on demand.
-Layer cache is stored in the registry (`:buildcache`). The Homebrew layer is
-keyed on the dotfiles' `.chezmoidata.toml`, so other dotfiles commits don't
-rebuild it.
+Layer cache is stored in the registry (`:buildcache`). The Home Manager layer
+is rebuilt whenever the dotfiles' `HEAD` changes.

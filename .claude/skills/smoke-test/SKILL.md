@@ -6,7 +6,7 @@ description: Run and extend the stub-based smoke tests for bin/devbox, install.s
 # Smoke tests
 
 `tests/smoke.sh` exercises the generated scripts on Linux. It puts stubs for
-`container`, `sysctl`, `uname`, `git`, `curl` and `chezmoi` in front of
+`container`, `sysctl`, `uname`, `git`, `curl` and `nix` in front of
 `PATH`; each prints its arguments, so a test asserts on the exact command
 lines the scripts would run.
 
@@ -24,7 +24,7 @@ after every edit to `templates/`, `config.toml`, `render.py` or `tests/`.
 - Can: argument parsing, the `container run`/`exec` flags (mounts, tmpfs,
   caps, SSH, key mount), container naming, profile checks, `--self-update`
   paths, installer behaviour, the entrypoint's user stage (seeding, image
-  change handling, key link, `chezmoi update` fallback).
+  change handling, key link, offline `home-manager switch` fallback).
 - Cannot: the entrypoint's root stage (needs root), the image build, or
   anything Apple's runtime actually does (virtiofs ownership, nested mounts,
   `--ssh` socket permissions, dockerd). Say so when reporting.
@@ -43,7 +43,7 @@ check "description" "$out" \
 - `devbox` runs `bin/devbox` with zsh from the `My Proj` folder; `entry`
   runs the entrypoint's user stage with paths rewritten into the temp dir.
 - To make a stub behave differently for one case, re-`stub` it (see the
-  failing `chezmoi update` case) or pass an env var the stub reads
+  failing `git pull` case) or pass an env var the stub reads
   (`RUNNING`, `FAKE_DOWNLOAD`).
 - For expected failures use `out=$(...) && fail ... || check ...`.
 - Keep stubs POSIX sh; keep the harness passing `shellcheck`.
