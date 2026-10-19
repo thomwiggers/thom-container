@@ -108,10 +108,10 @@ RUN install -d ~/.config/nix \
 
 # Dotfiles built without the age key: the secrets module skips decryption
 # when ~/.config/age/keys.txt is missing. `-b` moves aside the skeleton files
-# useradd created. DOTFILES_REV busts the cache when the dotfiles repository
-# changes.
-ARG DOTFILES_REV=unknown
-RUN echo "dotfiles rev: ${DOTFILES_REV}" \
+# useradd created. DOTFILES_HASH is a hash of the flake's inputs (see
+# dotfiles.cache_paths), so this slow layer is only rebuilt when they change.
+ARG DOTFILES_HASH=unknown
+RUN echo "dotfiles hash: ${DOTFILES_HASH}" \
  && git clone https://github.com/thomwiggers/chezmoi-dotfiles.git "$HOME/.config/home-manager" \
  && nix run "$HOME/.config/home-manager#home-manager" -- switch \
       --flake "$HOME/.config/home-manager#thom@linux-arm" -b hm-bak

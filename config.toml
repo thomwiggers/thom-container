@@ -27,6 +27,9 @@ repo = "https://github.com/thomwiggers/chezmoi-dotfiles.git"
 dir = ".config/home-manager"
 # homeConfigurations entry: <user>@<role>, here aarch64 Linux in a container.
 config = "thom@linux-arm"
+# Paths in the dotfiles repo that the Home Manager build depends on. CI hashes
+# their tree to key the (slow) switch layer, so unrelated commits reuse it.
+cache_paths = ["flake.nix", "flake.lock", "home.nix", "hosts", "modules", "files", "secrets", "machines"]
 
 [container]
 # The whole home directory is persisted on the host, per profile.
