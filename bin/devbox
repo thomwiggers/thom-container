@@ -341,13 +341,21 @@ if [[ -n $gh_token ]] && (( $+commands[gh] )); then
     fi
 fi
 
-# Claude Code token from --register-claude-token, if any. The entrypoint
-# exports it as CLAUDE_CODE_OAUTH_TOKEN.
+# Claude Code token from --register-claude-token, if any. Not with -e, which
+# would show in ps and `container inspect`: it goes in a file in a private
+# directory, which the entrypoint empties on start.
+claude_tmp=${${TMPDIR:-/tmp}%/}
+# Tokens left by containers that never started, and emptied directories.
+rm -f -- $claude_tmp/devbox-claude.*/token(N.mm+10)
+rmdir -- $claude_tmp/devbox-claude.*(N/^F) 2>/dev/null || true
 if (( $+commands[security] )) \
     && token=$(security find-generic-password -a "$profile" -s "$claude_service" -w 2>/dev/null) \
     && [[ -n $token ]]; then
-    env_args+=(-e "THOM_CONTAINER_CLAUDE_TOKEN=$token")
+    claude_dir=$(mktemp -d "$claude_tmp/devbox-claude.XXXXXX")
+    (umask 077 && print -r -- "$token" >"$claude_dir/token")
+    run_args+=(--volume "$claude_dir:/run/host-claude")
 fi
+unset token
 
 # Just the file: mounting ~/.ssh would expose the private keys.
 if [[ -f $known_hosts ]]; then

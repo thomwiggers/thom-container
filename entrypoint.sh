@@ -15,6 +15,7 @@ key_src=/run/host-age/keys.txt
 dotfiles_dir=$home_dir/.config/home-manager
 authorized_keys=/run/user/$user_uid/authorized_keys
 claude_token=/run/user/$user_uid/claude-oauth-token
+claude_src=/run/host-claude/token
 marker=.thom-container-image
 # Identifies the image's /nix (see the Containerfile); Nix state in the home
 # and in the nix_vol volume is only valid for the same value.
@@ -245,14 +246,13 @@ user_stage() {
     fi
 
     # Claude Code token from the host's Keychain (`devbox
-    # --register-claude-token`). Exported for the command; kept outside the
-    # persisted home for shells started later, which the dotfiles' zshenv
-    # gives it to.
-    if [ -n "${THOM_CONTAINER_CLAUDE_TOKEN:-}" ]; then
-        (umask 077 && printf '%s\n' "$THOM_CONTAINER_CLAUDE_TOKEN" > "$claude_token") \
-            || log "warning: could not write $claude_token; only this shell is logged in to Claude"
-        export CLAUDE_CODE_OAUTH_TOKEN=$THOM_CONTAINER_CLAUDE_TOKEN
-        unset THOM_CONTAINER_CLAUDE_TOKEN
+    # --register-claude-token`). Moved out of the host directory (deleting the
+    # host's copy) to outside the persisted home. It is never exported; only
+    # claude gets it (below, and the dotfiles' zsh).
+    if [ -f "$claude_src" ]; then
+        (umask 077 && cp "$claude_src" "$claude_token") \
+            || log "warning: could not copy the Claude token; not logged in to Claude"
+        rm -f "$claude_src" || log "warning: could not delete the Claude token on the host"
     fi
 
     # Link to the host's key rather than copying it into the persisted home.
@@ -297,6 +297,11 @@ user_stage() {
 
     check_nix
 
+    # Claude's own subprocesses (Bash tool, hooks, MCP servers) don't get the
+    # token: the scrub removes it from their environment.
+    if [ "${1:-}" = claude ] && [ -s "$claude_token" ]; then
+        CLAUDE_CODE_OAUTH_TOKEN=$(<"$claude_token") CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 exec "$@"
+    fi
     exec "$@"
 }
 

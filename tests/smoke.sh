@@ -73,7 +73,9 @@ command -v shasum >/dev/null || stub shasum 'sha256sum'
 
 export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm
 unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER \
-    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN THOM_CONTAINER_CLAUDE_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+export TMPDIR="$work/tmp/"
+mkdir -p "$TMPDIR"
 
 devbox() { (cd "$work/My Proj" && zsh -f "$repo/bin/devbox" "$@" 2>&1); }
 state="$work/home/.cache/thom-containers"
@@ -184,11 +186,21 @@ check "host gh not logged in" "$out" \
 
 echo "Claude token"
 out=$(devbox)
-check "no Claude token registered" "$out" "container run" "!THOM_CONTAINER_CLAUDE_TOKEN"
+check "no Claude token registered" "$out" "container run" "!/run/host-claude"
 out=$(CLAUDE_TOKEN=ctok devbox -p work)
-check "passes the profile's Claude token" "$out" "-e THOM_CONTAINER_CLAUDE_TOKEN=ctok-work "
+check "passes the profile's Claude token in a file" "$out" \
+    "--volume $work/tmp/devbox-claude." ":/run/host-claude " "!ctok"
+claude_tmp=$(sed -n 's#.*--volume \([^ ]*\):/run/host-claude .*#\1#p' <<<"$out")
+[[ $(cat "$claude_tmp/token") == ctok-work && $(stat -c %a "$claude_tmp") == 700 && $(stat -c %a "$claude_tmp/token") == 600 ]] \
+    && pass "Claude token file is private" || fail "Claude token file is private" "$(ls -la "$claude_tmp" 2>&1)"
 out=$(CLAUDE_TOKEN=ctok RUNNING=1 devbox)
-check "attach does not pass the Claude token" "$out" "container exec" "!THOM_CONTAINER_CLAUDE_TOKEN"
+check "attach does not pass the Claude token" "$out" "container exec" "!/run/host-claude" "!ctok"
+# A token that was never picked up goes after 10 minutes; empty dirs go.
+touch -d '-11 minutes' "$claude_tmp/token"
+mkdir "$work/tmp/devbox-claude.empty"
+out=$(devbox --no-gh)
+[[ ! -e $claude_tmp && ! -e $work/tmp/devbox-claude.empty ]] \
+    && pass "stale Claude token files removed" || fail "stale Claude token files removed" "$(ls -la "$work/tmp")"
 out=$(CLAUDE_TOKEN=x devbox -p work --register-claude-token <<<'  sk-ant-oat01-Ab_c-1  ')
 check "--register-claude-token" "$out" \
     "security -i stdin=add-generic-password -U -a work -s thom-container-claude -w sk-ant-oat01-Ab_c-1" \
@@ -255,6 +267,7 @@ sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^key_src=.*#key_src=$ep/key/keys.txt#" \
     -e "s#^authorized_keys=.*#authorized_keys=$ep/authorized_keys#" \
     -e "s#^claude_token=.*#claude_token=$ep/claude-token#" \
+    -e "s#^claude_src=.*#claude_src=$ep/host-claude/token#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -334,12 +347,19 @@ check "logs in to GitHub, token not leaked to the shell" "$out" \
 out=$(GH_FAIL=1 THOM_CONTAINER_GH_TOKEN=secret entry)
 check "gh login failure does not block start" "$out" "warning: gh auth login failed" "DONE"
 
+mkdir -p "$ep/host-claude"
+(umask 077 && echo ctok >"$ep/host-claude/token")
 # shellcheck disable=SC2016  # expanded by the inner sh
-out=$(THOM_CONTAINER_CLAUDE_TOKEN=ctok entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none} leak=${THOM_CONTAINER_CLAUDE_TOKEN:-none}"')
-check "Claude token exported, not leaked" "$out" "claude=ctok leak=none"
-[[ $(cat "$ep/claude-token") == ctok && $(stat -c %a "$ep/claude-token") == 600 ]] \
-    && pass "Claude token kept for later shells" || fail "Claude token kept for later shells" "$(ls -l "$ep/claude-token" 2>&1)"
+out=$(entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none}"')
+check "Claude token not in the shell's environment" "$out" "claude=none"
+[[ $(cat "$ep/claude-token") == ctok && $(stat -c %a "$ep/claude-token") == 600 && ! -e $ep/host-claude/token ]] \
+    && pass "Claude token moved off the host" || fail "Claude token moved off the host" "$(ls -l "$ep/claude-token" "$ep/host-claude" 2>&1)"
+stub claude 'echo "claude $* token=${CLAUDE_CODE_OAUTH_TOKEN:-none} scrub=${CLAUDE_CODE_SUBPROCESS_ENV_SCRUB:-none}"'
+out=$(entry claude -c)
+check "devbox -- claude gets the token, scrubbed" "$out" "claude -c token=ctok scrub=1"
 rm "$ep/claude-token"
+out=$(entry claude)
+check "no Claude token, plain claude" "$out" "claude  token=none scrub=none"
 # shellcheck disable=SC2016  # expanded by the inner sh
 out=$(entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none}"')
 check "no Claude token, none exported" "$out" "claude=none"

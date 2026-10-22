@@ -66,9 +66,14 @@ name on the first line) in it or any parent. Precedence: `-p`,
   `devbox -p <profile> --register-claude-token` and paste it. It goes in the
   login Keychain (service `thom-container-claude`, account = profile; delete
   with `security delete-generic-password -s thom-container-claude -a
-  <profile>`). New containers get it, the entrypoint exports it as
-  `CLAUDE_CODE_OAUTH_TOKEN` and keeps it in `/run/user/<uid>` (not persisted)
-  for shells started later, which the dotfiles' zshenv picks it up in.
+  <profile>`). It is never put in an environment variable on the way in:
+  `devbox` writes it to a private directory under `$TMPDIR`, mounted at
+  `/run/host-claude`, and the entrypoint moves it to `/run/user/<uid>` (not
+  persisted) and deletes the host's copy. Only `claude` itself gets
+  `CLAUDE_CODE_OAUTH_TOKEN`, from the entrypoint (`devbox -- claude`) or the
+  dotfiles' zsh `claude` function, together with
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` so its Bash tool, hooks and MCP servers
+  don't inherit it. Other shells and processes don't see it.
 - **Claude Code** per-project state: every folder is mounted at `/project`, so
   the launcher mounts `~/.claude/projects/<host path>` over
   `~/.claude/projects/-project` to keep projects apart.
