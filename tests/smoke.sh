@@ -114,6 +114,17 @@ out=$(devbox --attach) && fail "--attach without a container fails" "exit 0" \
 out=$(RUNNING=1 devbox --attach -- ls)
 check "--attach with a running container" "$out" "container exec" "dev-private-my-proj-" " ls" "!container run"
 
+stub code 'echo "code $*"'
+out=$(RUNNING=1 devbox --code)
+check "--code opens VS Code over Remote-SSH" "$out" \
+    "code --remote ssh-remote+thom@dev-private-my-proj-" ".devbox /project" "!container run" "!container exec"
+out=$(devbox --code) && fail "--code without a container fails" "exit 0" \
+    || check "--code without a container fails" "$out" "no running container" "!code --remote"
+out=$(RUNNING=1 devbox --code --attach) && fail "--code with --attach fails" "exit 0" \
+    || check "--code with --attach fails" "$out" "cannot be combined"
+out=$(RUNNING=1 THOM_CONTAINER_CODE=nope devbox --code) && fail "--code without the code command fails" "exit 0" \
+    || check "--code without the code command fails" "$out" "'nope' not found"
+
 echo "profile file"
 printf '  work  \n' >"$proj/.thom-container-profile"
 out=$(devbox)

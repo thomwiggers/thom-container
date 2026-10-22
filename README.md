@@ -16,6 +16,7 @@ devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
 devbox --attach             # new shell in the running container; fail if none
+devbox --code               # open VS Code on /project in the running container (Remote-SSH)
 devbox --reset              # wipe the profile's persisted home (asks first)
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
@@ -101,7 +102,9 @@ Host *.devbox
 The host key is generated once per profile and kept in the persisted home
 (`~/.local/state/sshd`), so it stays valid across containers. Find the name
 with `container ls` or the `ssh:` line `devbox` prints; in VS Code use
-"Remote-SSH: Connect to Host…" with `dev-private-<folder>-<hash>.devbox`.
+"Remote-SSH: Connect to Host…" with `dev-private-<folder>-<hash>.devbox`, or
+run `devbox --code` from the folder (needs the `code` command in `PATH`;
+override with `$THOM_CONTAINER_CODE`).
 
 ## Layout
 

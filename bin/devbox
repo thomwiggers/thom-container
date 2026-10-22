@@ -22,6 +22,7 @@ known_hosts="$HOME/.ssh/known_hosts"
 cpus=${THOM_CONTAINER_CPUS:-0}
 memory=${THOM_CONTAINER_MEMORY:-8G}
 docker=${THOM_CONTAINER_DOCKER:-}
+code_bin=${THOM_CONTAINER_CODE:-code}
 gh_token=1
 [[ -n ${THOM_CONTAINER_NO_GH:-} ]] && gh_token=
 typeset -A github_users=(
@@ -46,6 +47,9 @@ Options:
                       [env: THOM_CONTAINER_PROFILE, file: $profile_file]
       --attach        Attach a new shell (or run COMMAND) in the running
                       container; fail if there is none
+      --code          Open VS Code on /project in the running container
+                      over Remote-SSH (<name>.devbox); fail if there is none
+                      [env: THOM_CONTAINER_CODE=<code command>]
       --reset         Delete the profile's persisted home after asking, so it
                       is re-seeded from the image; refuses if any container
                       of the profile is running
@@ -97,6 +101,7 @@ self_update() {
 
 pull=
 attach=
+open_code=
 reset=
 dir=
 while (( $# )); do
@@ -108,6 +113,10 @@ while (( $# )); do
             ;;
         --attach)
             attach=1
+            shift
+            ;;
+        --code)
+            open_code=1
             shift
             ;;
         --reset)
@@ -184,6 +193,15 @@ slug=${${(L)dir:t}//[^a-z0-9-]/-}
 slug=${${slug[1,24]}%-}
 hash=$(print -rn -- "$dir" | shasum -a 256 | cut -c1-8)
 name="dev-$profile-$slug-$hash"
+
+if [[ -n $open_code ]]; then
+    [[ -z $attach && -z $reset ]] || die "--code cannot be combined with --attach or --reset"
+    (( $+commands[$code_bin] )) \
+        || die "'$code_bin' not found; in VS Code run 'Shell Command: Install code command in PATH'"
+    container inspect "$name" >/dev/null 2>&1 \
+        || die "no running container for $dir with profile '$profile'"
+    exec $code_bin --remote "ssh-remote+thom@$name.devbox" /project
+fi
 
 if [[ -n $reset ]]; then
     [[ -z $attach ]] || die "--reset and --attach cannot be combined"
