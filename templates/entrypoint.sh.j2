@@ -13,6 +13,7 @@ home_dir={{ container.home }}
 home_seed={{ container.home_seed }}
 key_src={{ container.key_dir }}/{{ container.key_file }}
 dotfiles_dir=$home_dir/{{ dotfiles.dir }}
+authorized_keys=/run/user/$user_uid/authorized_keys
 marker=.thom-container-image
 
 log() { echo "entrypoint: $*" >&2; }
@@ -50,6 +51,9 @@ root_stage() {
         cap_args=(--bounding-set=-sys_admin)
     fi
 
+    # Same bounding set as the shell, so ssh sessions can't use SYS_ADMIN.
+    start_sshd "${cap_args[@]}" || log "warning: sshd did not start; no ssh access"
+
     # Apple container's --ssh mounts the agent socket owned by root.
     if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
         chown "$user_uid:$user_gid" "$SSH_AUTH_SOCK" 2>/dev/null \
@@ -60,6 +64,34 @@ root_stage() {
     exec setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups "${cap_args[@]}" \
         env HOME="$home_dir" USER="$user_name" LOGNAME="$user_name" SHELL={{ user.shell }} \
         "$0" --user-stage "$@"
+}
+
+# sshd, for Remote-SSH from the Mac. Arguments: a setpriv prefix, if any.
+start_sshd() {
+    local keys=$home_dir/{{ container.sshd_keys }} key=/etc/ssh/ssh_host_ed25519_key
+    local -a launch=()
+    [ $# -eq 0 ] || launch=(setpriv "$@")
+
+    # The host key persists in the home so the Mac's known_hosts stays valid.
+    mkdir -p "$keys" /run/sshd
+    if [ ! -s "$keys/ssh_host_ed25519_key" ]; then
+        rm -f "$keys/ssh_host_ed25519_key" "$keys/ssh_host_ed25519_key.pub"
+        ssh-keygen -q -t ed25519 -N '' -C "devbox" -f "$keys/ssh_host_ed25519_key"
+        chown -R "$user_uid:$user_gid" "$keys" 2>/dev/null || true
+    fi
+    install -m 0600 "$keys/ssh_host_ed25519_key" "$key"
+    install -m 0644 "$keys/ssh_host_ed25519_key.pub" "$key.pub"
+
+    # sshd starts sessions with a bare environment; pass what the image's
+    # ENV and the launcher set. (Only the first SetEnv line counts, so write
+    # one.) None of the values contain spaces.
+    local var env_line=
+    for var in container LANG LC_ALL PATH SSH_AUTH_SOCK THOM_CONTAINER_PROFILE; do
+        [ -z "${!var:-}" ] || env_line="$env_line $var=${!var}"
+    done
+    echo "SetEnv$env_line" > /etc/ssh/sshd_config.d/zz-session-env.conf
+
+    "${launch[@]}" /usr/sbin/sshd
 }
 
 start_dockerd() {
@@ -75,7 +107,7 @@ start_dockerd() {
 }
 
 user_stage() {
-    local image_id home_id
+    local image_id home_id agent_keys
     if [ ! -e "$home_dir/$marker" ]; then
         # As the user, so the copy works on a mount that refuses chown.
         log "seeding $home_dir from image (existing files are kept)"
@@ -110,6 +142,14 @@ user_stage() {
 
     # Which devbox profile this home belongs to, for prompts and scripts.
     export THOM_CONTAINER_PROFILE=${THOM_CONTAINER_PROFILE:-unknown}
+
+    # sshd (root stage) authorizes the public keys of the forwarded agent.
+    if [ -n "${SSH_AUTH_SOCK:-}" ] && agent_keys=$(ssh-add -L 2>/dev/null); then
+        printf '%s\n' "$agent_keys" > "$authorized_keys"
+        chmod 0600 "$authorized_keys"
+    else
+        log "warning: no keys in the SSH agent; cannot ssh into this container"
+    fi
 
     # Terminfo entry for the host terminal (base64 of `infocmp -x $TERM`).
     if [ -n "${THOM_CONTAINER_TERMINFO:-}" ]; then

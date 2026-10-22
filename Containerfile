@@ -131,6 +131,29 @@ RUN cp -a /home/thom /opt/home-seed \
  && echo "${IMAGE_ID}" > /opt/home-seed/.thom-container-image \
  && chown 501:20 /opt/home-seed/.thom-container-image
 
+# sshd for VS Code Remote-SSH and the like, reached as <name>.<dns_domain>
+# from the Mac. Installed after the slow layers above so they stay cached.
+# - No host keys in the image (Debian's postinst generates some, and the image
+#   is public); the entrypoint installs one that persists in the home.
+# - Public keys of the forwarded agent are authorized by the entrypoint, in
+#   a tmpfs file so no stale keys survive the container.
+# - PAM is off, which makes sshd refuse accounts whose password field starts
+#   with "!" (useradd's default); "*" is unusable as a password but not locked.
+# - sshd gives sessions a bare environment; the entrypoint writes SetEnv.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-server \
+ && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
+ && usermod -p '*' thom \
+ && printf '%s\n' \
+      'HostKey /etc/ssh/ssh_host_ed25519_key' \
+      'AuthorizedKeysFile /run/user/501/authorized_keys' \
+      'AllowUsers thom' \
+      'PermitRootLogin no' \
+      'PasswordAuthentication no' \
+      'KbdInteractiveAuthentication no' \
+      'UsePAM no' \
+      > /etc/ssh/sshd_config.d/devbox.conf
+
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 
 WORKDIR /project

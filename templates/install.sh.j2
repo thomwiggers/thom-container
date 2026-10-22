@@ -92,6 +92,17 @@ step "Starting the container system service"
 # Explicit kernel flag: with `curl | zsh`, a prompt would eat the script.
 container system status >/dev/null 2>&1 || container system start --enable-kernel-install
 
+# Containers are reachable as <name>.{{ host.dns_domain }} (SSH, VS Code). This needs a
+# resolver for the domain, which takes sudo, and the service's default domain,
+# whose change restarts the service and so stops running containers: leave
+# both to the user.
+if ! container system dns list --quiet 2>/dev/null | grep -qx '{{ host.dns_domain }}'; then
+    warn "DNS domain '{{ host.dns_domain }}' is not registered, so <container>.{{ host.dns_domain }} will not resolve. To enable it:"
+    echo "    sudo container system dns create {{ host.dns_domain }}" >&2
+    echo "    # in ~/.config/container/config.toml:  [dns]  domain = \"{{ host.dns_domain }}\"" >&2
+    echo "    container system stop && container system start   # stops running containers" >&2
+fi
+
 if [ -n "$pull" ]; then
     step "Pulling $image"
     if ! container image pull "$image"; then

@@ -298,4 +298,8 @@ else
     print -r -- "warning: no age key at $key_dir/keys.txt; encrypted dotfiles stay locked" >&2
 fi
 
+if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
+    print -r -- "ssh: thom@$name.devbox" >&2
+fi
+
 exec container run $tty_args $env_args $run_args "$image" "$@"
