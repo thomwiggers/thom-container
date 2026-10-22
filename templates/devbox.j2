@@ -12,7 +12,10 @@ prog=${0:t}
 self=${0:A}
 
 image=${THOM_CONTAINER_IMAGE:-{{ image.name }}:{{ image.tag }}}
-profile=${THOM_CONTAINER_PROFILE:-{{ host.default_profile }}}
+# Profile precedence: -p, $THOM_CONTAINER_PROFILE, .thom-container-profile
+# (found once DIR is known), default.
+profile=${THOM_CONTAINER_PROFILE:-}
+profile_file=.thom-container-profile
 profiles=({{ host.profiles | join(' ') }})
 state_root="{{ host_path(host.state_root) }}"
 key_dir="{{ host_path(host.key_dir) }}"
@@ -36,12 +39,20 @@ Start a container with DIR (default: current directory) mounted at
 {{ container.project }}. If a container for DIR and the profile is already
 running, attach a new shell to it instead.
 
+The profile can also be set per folder: put its name on the first line of a
+$profile_file file in DIR or any parent directory.
+
 The home directory {{ container.home }} is persisted per profile in
 $state_root/<profile>.
 
 Options:
-  -p, --profile NAME  Profile to use: ${profiles[*]} (default: $profile)
-                      [env: THOM_CONTAINER_PROFILE]
+  -p, --profile NAME  Profile to use: ${profiles[*]} (default: {{ host.default_profile }})
+                      [env: THOM_CONTAINER_PROFILE, file: $profile_file]
+      --attach        Attach a new shell (or run COMMAND) in the running
+                      container; fail if there is none
+      --reset         Delete the profile's persisted home after asking, so it
+                      is re-seeded from the image; refuses if any container
+                      of the profile is running
       --pull          Pull the image before starting
       --self-update   Update this script (git pull if it lives in a clone,
                       otherwise download the latest release) and exit
@@ -89,6 +100,8 @@ self_update() {
 }
 
 pull=
+attach=
+reset=
 dir=
 while (( $# )); do
     case $1 in
@@ -96,6 +109,14 @@ while (( $# )); do
             (( $# >= 2 )) || die "$1 needs an argument"
             profile=$2
             shift 2
+            ;;
+        --attach)
+            attach=1
+            shift
+            ;;
+        --reset)
+            reset=1
+            shift
             ;;
         --pull)
             pull=1
@@ -135,15 +156,54 @@ while (( $# )); do
     esac
 done
 
+[[ -d ${dir:-.} ]] || die "cannot access folder: $dir"
+dir=${${dir:-.}:A}
+
+if [[ -z $profile ]]; then
+    # Nearest $profile_file wins, like .git.
+    d=$dir
+    while true; do
+        if [[ -f $d/$profile_file ]]; then
+            read -r profile <"$d/$profile_file" || true
+            profile=${${profile## #}%% #}
+            [[ -n $profile ]] || die "$d/$profile_file is empty"
+            break
+        fi
+        [[ $d == / ]] && break
+        d=${d:h}
+    done
+    profile=${profile:-{{ host.default_profile }}}
+fi
+
 (( ${profiles[(Ie)$profile]} )) \
     || die "unknown profile '$profile' (known: ${profiles[*]}; add it to config.toml)"
 
 (( $+commands[container] )) \
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
-[[ -d ${dir:-.} ]] || die "cannot access folder: $dir"
-dir=${${dir:-.}:A}
 home_state="$state_root/$profile"
+
+# Deterministic per (profile, folder) so a second invocation attaches.
+slug=${${(L)dir:t}//[^a-z0-9-]/-}
+slug=${${slug[1,24]}%-}
+hash=$(print -rn -- "$dir" | shasum -a 256 | cut -c1-8)
+name="{{ host.name_prefix }}-$profile-$slug-$hash"
+
+if [[ -n $reset ]]; then
+    [[ -z $attach ]] || die "--reset and --attach cannot be combined"
+    # Any folder's container on this profile uses the home being deleted.
+    running=(${(f)"$(container list --quiet 2>/dev/null)"})
+    running=(${(M)running:#{{ host.name_prefix }}-$profile-*})
+    (( $#running )) \
+        && die "containers using profile '$profile' are running (${(j:, :)running}); exit them before --reset"
+    if [[ -d $home_state ]]; then
+        print -rn -- "Delete $home_state (all of profile '$profile')? [y/N] "
+        read -r reply || reply=
+        [[ $reply == [yY]* ]] || die "aborted"
+        rm -rf -- "$home_state"
+        print -r -- "Reset $home_state"
+    fi
+fi
 mkdir -p "$home_state"
 
 # Claude Code keys per-project state (sessions, memory) on the working
@@ -151,12 +211,6 @@ mkdir -p "$home_state"
 # Claude would have used for the host path over it to keep projects apart.
 claude_projects="$home_state/{{ claude.projects_dir }}/${dir//[^A-Za-z0-9]/-}"
 mkdir -p "$claude_projects"
-
-# Deterministic per (profile, folder) so a second invocation attaches.
-slug=${${(L)dir:t}//[^a-z0-9-]/-}
-slug=${${slug[1,24]}%-}
-hash=$(print -rn -- "$dir" | shasum -a 256 | cut -c1-8)
-name="{{ host.name_prefix }}-$profile-$slug-$hash"
 
 tty_args=(-i)
 [[ -t 0 && -t 1 ]] && tty_args=(-i -t)
@@ -178,6 +232,8 @@ if container inspect "$name" >/dev/null 2>&1; then
         --user {{ user.name }} --workdir {{ container.project }} \
         "$name" "$@"
 fi
+
+[[ -z $attach ]] || die "no running container for $dir with profile '$profile'"
 
 if [[ -n $pull ]]; then
     container image pull "$image"

@@ -15,6 +15,8 @@ curl -fsSL https://raw.githubusercontent.com/thomwiggers/thom-container/main/ins
 devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
+devbox --attach             # new shell in the running container; fail if none
+devbox --reset              # wipe the profile's persisted home (asks first)
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
 devbox --docker             # also start dockerd inside (grants all capabilities)
@@ -22,6 +24,10 @@ devbox --docker             # also start dockerd inside (grants all capabilities
 
 Running `devbox` again for the same folder and profile attaches a new shell
 to the running container.
+
+A folder can pick its profile with a `.thom-container-profile` file (profile
+name on the first line) in it or any parent. Precedence: `-p`,
+`$THOM_CONTAINER_PROFILE`, the file, then the default.
 
 - **Home directory** (`/home/thom`) is persisted per profile in
   `~/.cache/thom-containers/<profile>`. On first start it is seeded from the

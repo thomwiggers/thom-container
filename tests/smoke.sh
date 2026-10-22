@@ -46,7 +46,7 @@ mkdir -p "$work/bin" "$work/home/.config/age" "$work/My Proj"
 : >"$work/home/.config/age/keys.txt"
 mkdir -p "$work/home/.ssh"
 echo "github.com ssh-ed25519 AAAA" >"$work/home/.ssh/known_hosts"
-stub container 'echo "container $*"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; exit 0'
+stub container 'echo "container $*"; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; exit 0'
 stub sysctl 'echo 10'
 stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
 stub git 'echo "git $*"'
@@ -105,6 +105,38 @@ out=$(RUNNING=1 devbox)
 check "attaches to running container" "$out" \
     "container exec -i -e TERM=xterm -e THOM_CONTAINER_PROFILE=private -e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock -e HOME=/home/thom --user thom --workdir /project dev-private-my-proj-" \
     "/usr/bin/zsh -l" "!container run" "!THOM_CONTAINER_GH_TOKEN" "!THOM_CONTAINER_TERMINFO"
+
+out=$(devbox --attach) && fail "--attach without a container fails" "exit 0" \
+    || check "--attach without a container fails" "$out" "no running container" "!container run"
+out=$(RUNNING=1 devbox --attach -- ls)
+check "--attach with a running container" "$out" "container exec" "dev-private-my-proj-" " ls" "!container run"
+
+echo "profile file"
+printf '  work  \n' >"$proj/.thom-container-profile"
+out=$(devbox)
+check "profile from file" "$out" "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work"
+mkdir -p "$proj/sub"
+out=$(cd "$proj/sub" && zsh -f "$repo/bin/devbox" 2>&1)
+check "profile file found in a parent" "$out" "--name dev-work-"
+out=$(THOM_CONTAINER_PROFILE=private devbox)
+check "env beats profile file" "$out" "--name dev-private-"
+out=$(devbox -p private)
+check "-p beats profile file" "$out" "--name dev-private-"
+printf 'nope\n' >"$proj/.thom-container-profile"
+out=$(devbox) && fail "unknown profile in file" "exit 0" \
+    || check "unknown profile in file" "$out" "unknown profile 'nope'"
+rm "$proj/.thom-container-profile"
+
+echo "--reset"
+out=$(LISTED=$'dev-work-x-1\ndev-private-other-1' devbox --reset </dev/null) && fail "--reset refuses while running" "exit 0" \
+    || check "--reset refuses while running" "$out" "dev-private-other-1" "!dev-work-x-1" "are running"
+touch "$state/private/marker"
+out=$(devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
+    || check "--reset aborts on no" "$out" "aborted"
+[[ -e $state/private/marker ]] && pass "home kept on abort" || fail "home kept on abort" "marker gone"
+out=$(devbox --reset <<<y)
+check "--reset wipes and restarts" "$out" "Reset $state/private" "container run"
+[[ ! -e $state/private/marker ]] && pass "home wiped" || fail "home wiped" "marker still there"
 
 out=$(SSH_AUTH_SOCK='' devbox)
 check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
