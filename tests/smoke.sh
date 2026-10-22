@@ -222,6 +222,7 @@ echo "entrypoint.sh (user stage)"
 ep="$work/ep"
 mkdir -p "$ep/home" "$ep/seed/.config" "$ep/key"
 echo img1 >"$ep/seed/.thom-container-image"
+echo nix1 >"$ep/seed/.thom-container-nix"
 echo seeded >"$ep/seed/file"
 echo hidden >"$ep/seed/.hidden"
 echo secret >"$ep/key/keys.txt"
@@ -245,21 +246,42 @@ check "first start pulls and switches with key" "$out" \
 [[ $(cat "$ep/home/file") == seeded && $(cat "$ep/home/.hidden") == hidden && $(readlink "$ep/home/.config/age/keys.txt") == "$ep/key/keys.txt" ]] \
     && pass "home seeded, key linked" || fail "home seeded, key linked" "$(ls -la "$ep/home" "$ep/home/.config/age")"
 
-# New image with a stale profile link in the persisted home; offline.
+# Rebuilt image with the same /nix: the persisted store, and the profile
+# links into it, stay.
 echo img2 >"$ep/seed/.thom-container-image"
-ln -s /nix/store/new-profile "$ep/seed/.nix-profile"
 ln -s /nix/store/old-profile "$ep/home/.nix-profile"
+out=$(entry)
+check "rebuilt image, same store" "$out" "DONE" "!refreshing Nix profiles"
+[[ $(readlink "$ep/home/.nix-profile") == /nix/store/old-profile ]] \
+    && pass "profile link kept" || fail "profile link kept" "$(readlink "$ep/home/.nix-profile")"
+
+# Different /nix with a stale profile link in the persisted home; offline.
+echo nix2 >"$ep/seed/.thom-container-nix"
+ln -s /nix/store/new-profile "$ep/seed/.nix-profile"
 rm "$ep/key/keys.txt"
 stub git 'echo "git $*"; [ "$3" = pull ] && exit 1; exit 0'
 out=$(entry)
 check "new image, no key, offline" "$out" \
-    "image changed (img1 -> img2)" "refreshing Nix profiles" \
+    "Nix store changed (nix1 -> nix2)" "refreshing Nix profiles" \
     "git -C $ep/home/.config/home-manager pull --ff-only" "dotfiles pull failed" \
     "-b hm-bak --offline" "DONE" "!seeding"
 [[ $(readlink "$ep/home/.nix-profile") == /nix/store/new-profile ]] \
     && pass "stale profile link replaced" || fail "stale profile link replaced" "$(readlink "$ep/home/.nix-profile")"
 [[ ! -e $ep/home/.config/age/keys.txt && ! -L $ep/home/.config/age/keys.txt ]] \
     && pass "stale key link removed" || fail "stale key link removed" "still there"
+
+# Sanity check: a dangling ~/.nix-profile, or a store nix can't open,
+# recommends --reset; a healthy one stays quiet.
+out=$(entry)
+check "dangling profile recommends --reset" "$out" "looks broken" "devbox --reset" "DONE"
+mkdir -p "$ep/store/profile"
+ln -sfn "$ep/store/profile" "$ep/home/.nix-profile"
+out=$(entry)
+check "healthy store stays quiet" "$out" "DONE" "!looks broken"
+stub nix 'case $1 in store) exit 1;; esac; echo "nix $*"'
+out=$(entry)
+check "unreadable store recommends --reset" "$out" "looks broken" "devbox --reset" "DONE"
+stub nix 'echo "nix $*"'
 
 [[ $(cat "$ep/authorized_keys") == $'ssh-ed25519 AAAAkey1 first\nssh-ed25519 AAAAkey2 second' && $(stat -c %a "$ep/authorized_keys") == 600 ]] \
     && pass "agent keys authorized for sshd" || fail "agent keys authorized for sshd" "$(cat "$ep/authorized_keys" 2>&1)"

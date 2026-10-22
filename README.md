@@ -37,8 +37,9 @@ name on the first line) in it or any parent. Precedence: `-p`,
 - **Nix store** (`/nix`) is persisted per profile too, in
   `~/.cache/thom-containers/<profile>.nix`, so `nix profile add` and Home
   Manager builds survive the container. The entrypoint seeds it from the
-  image's `/nix` (slow, once) and bind-mounts it. A new image gets a fresh
-  store, dropping what was added since. Don't use two containers of one
+  image's `/nix` (slow, once) and bind-mounts it. The store is replaced when
+  the image's `/nix` changes (the dotfiles hash, so not on every rebuild),
+  dropping what was added since. Don't use two containers of one
   profile for Nix at the same time: single-user Nix has no cross-container
   locking. Nothing garbage-collects it; run `nix-collect-garbage -d`.
 - **Dotfiles**: the image is built without the age key. When
