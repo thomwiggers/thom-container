@@ -262,6 +262,18 @@ user_stage() {
             log "warning: dotfiles pull failed; switching without pulling"
             switch_args=(--offline)
         fi
+        # Register this host (devbox-<folder>) under the dotfiles' machines/ so
+        # a plain `home-manager switch` finds thom@<hostname>. `add -N` makes
+        # the flake see the file without staging its contents; it is never
+        # committed.
+        local machine
+        machine=machines/$(hostname -s)
+        mkdir -p "$dotfiles_dir/machines"
+        if [ ! -e "$dotfiles_dir/$machine" ]; then
+            echo "{{ dotfiles.config.split('@')[-1] }}" > "$dotfiles_dir/$machine"
+        fi
+        git -C "$dotfiles_dir" add -N -- "$machine" </dev/null \
+            || log "warning: could not register $machine; use home-manager switch --flake"
         if ! nix run "$dotfiles_dir#home-manager" -- switch \
             --flake "$dotfiles_dir#{{ dotfiles.config }}" -b hm-bak \
             "${switch_args[@]}" </dev/null; then
