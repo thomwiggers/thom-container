@@ -56,6 +56,7 @@ mount_nix() {
         # As the user, so the copy works on a mount that refuses chown.
         # Entries rather than "/nix/.", so the mount point keeps its own
         # times and mode.
+        # shellcheck disable=SC2016  # $1 is for the inner bash
         if setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
             bash -c 'shopt -s dotglob nullglob; cp -a /nix/* "$1"/' _ "$nix_vol"; then
             echo "$nix_id" > "$nix_vol/$nix_marker"
