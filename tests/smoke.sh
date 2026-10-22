@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2015,SC2016  # stub bodies are literal; pass/fail never fail
 # Smoke tests for the generated scripts, runnable on Linux without Apple's
-# container: `container`, `sysctl`, `git`, `curl` and `chezmoi` are replaced
+# container: `container`, `sysctl`, `git`, `curl` and `nix` are replaced
 # by stubs that log their arguments.
 #
 # Usage: tests/smoke.sh   (render first: uv run render.py)
@@ -42,8 +42,8 @@ stub() {
     chmod +x "$work/bin/$1"
 }
 
-mkdir -p "$work/bin" "$work/home/.config/chezmoi" "$work/My Proj"
-: >"$work/home/.config/chezmoi/key.txt"
+mkdir -p "$work/bin" "$work/home/.config/age" "$work/My Proj"
+: >"$work/home/.config/age/keys.txt"
 mkdir -p "$work/home/.ssh"
 echo "github.com ssh-ed25519 AAAA" >"$work/home/.ssh/known_hosts"
 stub container 'echo "container $*"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; exit 0'
@@ -85,7 +85,7 @@ check "run with defaults" "$out" \
     "-e THOM_CONTAINER_GH_TOKEN=tok " \
     "-e THOM_CONTAINER_TERMINFO=$fake_terminfo " \
     "--ssh" \
-    "--volume $work/home/.config/chezmoi:/run/host-chezmoi:ro" \
+    "--volume $work/home/.config/age:/run/host-age:ro" \
     "--volume $work/home/.ssh/known_hosts:/run/host-ssh/known_hosts:ro" \
     "--cap-add CAP_SYS_ADMIN" \
     "-e THOM_CONTAINER_HOSTNAME=devbox-my-proj " \
@@ -168,10 +168,10 @@ mkdir -p "$ep/home" "$ep/seed/.config" "$ep/key"
 echo img1 >"$ep/seed/.thom-container-image"
 echo seeded >"$ep/seed/file"
 echo hidden >"$ep/seed/.hidden"
-echo secret >"$ep/key/key.txt"
+echo secret >"$ep/key/keys.txt"
 sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^home_seed=.*#home_seed=$ep/seed#" \
-    -e "s#^key_src=.*#key_src=$ep/key/key.txt#" \
+    -e "s#^key_src=.*#key_src=$ep/key/keys.txt#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -179,28 +179,39 @@ entry() {
     (cd "$ep" && bash "$ep/entrypoint.sh" --user-stage "${cmd[@]}" 2>&1)
 }
 
-stub chezmoi 'echo "chezmoi $*"'
+stub nix 'echo "nix $*"'
 out=$(entry)
-check "first start seeds and applies with key" "$out" \
-    "seeding $ep/home" "chezmoi update --init --force --keep-going" "DONE" \
-    "!--exclude encrypted" "!delete-bucket"
-[[ $(cat "$ep/home/file") == seeded && $(cat "$ep/home/.hidden") == hidden && $(readlink "$ep/home/.config/chezmoi/key.txt") == "$ep/key/key.txt" ]] \
-    && pass "home seeded, key linked" || fail "home seeded, key linked" "$(ls -la "$ep/home" "$ep/home/.config/chezmoi")"
+check "first start pulls and switches with key" "$out" \
+    "seeding $ep/home" "git -C $ep/home/.config/home-manager pull --ff-only" \
+    "nix run $ep/home/.config/home-manager#home-manager -- switch --flake $ep/home/.config/home-manager#thom@linux-arm -b hm-bak" \
+    "DONE" "!--offline" "!refreshing Nix profiles"
+[[ $(cat "$ep/home/file") == seeded && $(cat "$ep/home/.hidden") == hidden && $(readlink "$ep/home/.config/age/keys.txt") == "$ep/key/keys.txt" ]] \
+    && pass "home seeded, key linked" || fail "home seeded, key linked" "$(ls -la "$ep/home" "$ep/home/.config/age")"
 
+# New image with a stale profile link in the persisted home; offline.
 echo img2 >"$ep/seed/.thom-container-image"
-rm "$ep/key/key.txt"
-stub chezmoi 'echo "chezmoi $*"; [ "$1" = update ] && exit 1; exit 0'
+ln -s /nix/store/new-profile "$ep/seed/.nix-profile"
+ln -s /nix/store/old-profile "$ep/home/.nix-profile"
+rm "$ep/key/keys.txt"
+stub git 'echo "git $*"; [ "$3" = pull ] && exit 1; exit 0'
 out=$(entry)
 check "new image, no key, offline" "$out" \
-    "image changed (img1 -> img2)" "chezmoi state delete-bucket --bucket=entryState" \
-    "chezmoi update --init --force --keep-going --exclude encrypted" \
-    "applying without pulling" "chezmoi apply --force --keep-going --exclude encrypted" "DONE" \
-    "!seeding"
-[[ ! -e $ep/home/.config/chezmoi/key.txt ]] \
+    "image changed (img1 -> img2)" "refreshing Nix profiles" \
+    "git -C $ep/home/.config/home-manager pull --ff-only" "dotfiles pull failed" \
+    "-b hm-bak --offline" "DONE" "!seeding"
+[[ $(readlink "$ep/home/.nix-profile") == /nix/store/new-profile ]] \
+    && pass "stale profile link replaced" || fail "stale profile link replaced" "$(readlink "$ep/home/.nix-profile")"
+[[ ! -e $ep/home/.config/age/keys.txt && ! -L $ep/home/.config/age/keys.txt ]] \
     && pass "stale key link removed" || fail "stale key link removed" "still there"
 
 out=$(THOM_CONTAINER_SKIP_APPLY=1 entry)
-check "THOM_CONTAINER_SKIP_APPLY" "$out" "DONE" "!chezmoi update"
+check "THOM_CONTAINER_SKIP_APPLY" "$out" "DONE" "!pull" "!nix run"
+
+stub nix 'echo "nix $*"; exit 1'
+out=$(entry)
+check "failed switch does not stop the shell" "$out" "home-manager switch failed" "DONE"
+stub nix 'echo "nix $*"'
+stub git 'echo "git $*"'
 
 # shellcheck disable=SC2016  # expanded by the inner sh
 out=$(THOM_CONTAINER_GH_TOKEN=secret entry sh -c 'echo "leak=${THOM_CONTAINER_GH_TOKEN:-none}"')

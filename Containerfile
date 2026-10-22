@@ -5,9 +5,8 @@ FROM debian:trixie
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Base system. build-essential/procps/curl/file/git are what the dotfiles'
-# Debian bootstrap needs for Homebrew; util-linux(-extra) provides lscpu,
-# which the chezmoi config template calls.
+# Base system. curl, git and xz-utils are what the Nix installer and the
+# dotfiles checkout need; everything else comes from Home Manager.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential \
@@ -26,7 +25,6 @@ RUN apt-get update \
       sudo \
       unzip \
       util-linux \
-      util-linux-extra \
       wget \
       xz-utils \
       zsh \
@@ -85,48 +83,38 @@ RUN apt-get update \
       fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 
-# chezmoi, system-wide so it is available before the home directory exists.
-RUN sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
-
-# Unprivileged user matching the macOS host uid/gid. Homebrew refuses to run
-# as root, and the dotfiles bootstrap calls `sudo apt-get`.
+# Unprivileged user matching the macOS host uid/gid, with passwordless sudo.
+# /nix is owned by the user: single-user Nix, no daemon.
 RUN groupadd --non-unique --gid 20 thom \
  && useradd --uid 501 --gid 20 --shell /usr/bin/zsh \
       --home-dir /home/thom --create-home thom \
  && echo 'thom ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/thom \
  && chmod 0440 /etc/sudoers.d/thom \
  && usermod -aG docker thom \
- && install -d -o 501 -g 20 /project
+ && install -d -o 501 -g 20 /nix /project
 
 USER thom
 WORKDIR /home/thom
-ENV PATH=/home/thom/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH
+# The Nix installer wants $USER; ~/.nix-profile/bin is where nix lives.
+ENV USER=thom \
+    PATH=/home/thom/.nix-profile/bin:/home/thom/.local/bin:$PATH
 
-ENV HOMEBREW_NO_ANALYTICS=1 \
-    HOMEBREW_NO_AUTO_UPDATE=1 \
-    HOMEBREW_NO_ENV_HINTS=1 \
-    HOMEBREW_NO_INSTALL_CLEANUP=1
+# Nix has no build sandbox here: unprivileged user namespaces are not
+# available while building the image or in the container.
+RUN install -d ~/.config/nix \
+ && printf 'experimental-features = nix-command flakes\nsandbox = false\n' > ~/.config/nix/nix.conf \
+ && curl -fsSL https://nixos.org/nix/install | sh -s -- --no-daemon \
+ && nix --version
 
-# Homebrew and the dotfiles' brew packages in their own layer, so the slow
-# (on arm64 Linux largely from-source) install is only redone when the package
-# list changes. BuildKit caches `ADD <url>` by content checksum, so this layer
-# is invalidated by edits to the data file, not by other dotfiles commits.
-RUN NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
- && brew --version
-ADD --chown=501:20 https://raw.githubusercontent.com/thomwiggers/chezmoi-dotfiles/main/.chezmoidata.toml /tmp/chezmoidata.toml
-RUN mapfile -t formulae < <(awk '/^brew = \[/ {f=1; next} f && /^\]/ {f=0} f' /tmp/chezmoidata.toml | tr -d ' ",') \
- && echo "installing: ${formulae[*]}" \
- && brew install --formula "${formulae[@]}" \
- && rm -rf "$(brew --cache)" /tmp/chezmoidata.toml
-
-# Dotfiles without the age key: `--exclude encrypted` (space-separated, as the
-# dotfiles' decrypt script greps for it) skips the passphrase prompt.
-# Its Homebrew bootstrap finds everything above already installed.
-# DOTFILES_REV busts the cache when the dotfiles repository changes.
-ARG DOTFILES_REV=unknown
-RUN echo "dotfiles rev: ${DOTFILES_REV}" \
- && chezmoi init --apply --exclude encrypted https://github.com/thomwiggers/chezmoi-dotfiles.git \
- && rm -rf "$(brew --cache)"
+# Dotfiles built without the age key: the secrets module skips decryption
+# when ~/.config/age/keys.txt is missing. `-b` moves aside the skeleton files
+# useradd created. DOTFILES_HASH is a hash of the flake's inputs (see
+# dotfiles.cache_paths), so this slow layer is only rebuilt when they change.
+ARG DOTFILES_HASH=unknown
+RUN echo "dotfiles hash: ${DOTFILES_HASH}" \
+ && git clone https://github.com/thomwiggers/chezmoi-dotfiles.git "$HOME/.config/home-manager" \
+ && nix run "$HOME/.config/home-manager#home-manager" -- switch \
+      --flake "$HOME/.config/home-manager#thom@linux-arm" -b hm-bak
 
 # Claude Code, native installer. CLAUDE_CACHE_BUST lets CI pick up new
 # releases without rebuilding the (slow) dotfiles layer.

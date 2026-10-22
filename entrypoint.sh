@@ -11,7 +11,8 @@ user_uid=501
 user_gid=20
 home_dir=/home/thom
 home_seed=/opt/home-seed
-key_src=/run/host-chezmoi/key.txt
+key_src=/run/host-age/keys.txt
+dotfiles_dir=$home_dir/.config/home-manager
 marker=.thom-container-image
 
 log() { echo "entrypoint: $*" >&2; }
@@ -94,10 +95,18 @@ user_stage() {
     image_id=$(cat "$home_seed/$marker" 2>/dev/null || echo unknown)
     home_id=$(cat "$home_dir/$marker" 2>/dev/null || echo none)
     if [ "$image_id" != "$home_id" ]; then
-        # New image: Homebrew under /home/linuxbrew came from the image, so
-        # forget which run_onchange_ scripts ran and let them reconcile.
-        log "image changed ($home_id -> $image_id); re-running chezmoi install scripts"
-        chezmoi state delete-bucket --bucket=entryState || true
+        # New image: /nix came from the image, so the profile links in the
+        # persisted home point at store paths that no longer exist. Take the
+        # image's links; the switch below relinks the rest.
+        log "image changed ($home_id -> $image_id); refreshing Nix profiles"
+        local p
+        for p in ".nix-profile" ".nix-defexpr" ".local/state/nix" ".local/state/home-manager" ; do
+            rm -rf "${home_dir:?}/$p"
+            if [ -e "$home_seed/$p" ] || [ -L "$home_seed/$p" ]; then
+                mkdir -p "$(dirname "$home_dir/$p")"
+                cp -a "$home_seed/$p" "$home_dir/$p" || log "warning: could not refresh $p"
+            fi
+        done
         echo "$image_id" > "$home_dir/$marker"
     fi
 
@@ -125,30 +134,30 @@ user_stage() {
     fi
 
     # Link to the host's key rather than copying it into the persisted home.
-    local -a apply_args=()
-    local key_link="$home_dir/.config/chezmoi/key.txt"
+    # Without it, the dotfiles' secrets module skips decryption.
+    local key_link="$home_dir/.config/age/keys.txt"
     if [ -f "$key_src" ]; then
         mkdir -p "$(dirname "$key_link")"
         ln -sfn "$key_src" "$key_link"
     else
         rm -f "$key_link"
         log "no age key at $key_src; skipping encrypted dotfiles"
-        # Must be two separate words: the dotfiles' decrypt script looks for
-        # the literal string "--exclude encrypted".
-        apply_args=(--exclude encrypted)
     fi
 
     if [ -z "${THOM_CONTAINER_SKIP_APPLY:-}" ]; then
-        # Pull the dotfiles, regenerate the config (hostname, CPU count) and
-        # apply, overwriting local edits to managed files. If the pull fails
-        # (e.g. offline), still apply what we have. Failures should not keep
-        # the shell from starting.
-        if ! chezmoi update --init --force --keep-going "${apply_args[@]}" </dev/null; then
-            log "warning: chezmoi update failed; applying without pulling"
-            if ! { chezmoi init --keep-going </dev/null \
-                && chezmoi apply --force --keep-going "${apply_args[@]}" </dev/null; }; then
-                log "warning: chezmoi failed; continuing (rerun: chezmoi apply)"
-            fi
+        # Pull the dotfiles and switch, overwriting local edits to managed
+        # files. If the pull fails (e.g. offline), still switch to what we
+        # have, without fetching. Failures should not keep the shell from
+        # starting.
+        local -a switch_args=()
+        if ! git -C "$dotfiles_dir" pull --ff-only </dev/null; then
+            log "warning: dotfiles pull failed; switching without pulling"
+            switch_args=(--offline)
+        fi
+        if ! nix run "$dotfiles_dir#home-manager" -- switch \
+            --flake "$dotfiles_dir#thom@linux-arm" -b hm-bak \
+            "${switch_args[@]}" </dev/null; then
+            log "warning: home-manager switch failed; continuing (rerun: home-manager switch)"
         fi
     fi
 
