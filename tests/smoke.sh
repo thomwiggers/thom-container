@@ -73,7 +73,7 @@ command -v shasum >/dev/null || stub shasum 'sha256sum'
 
 export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm
 unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER \
-    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR
 export TMPDIR="$work/tmp/"
 mkdir -p "$TMPDIR"
 
@@ -350,16 +350,14 @@ check "gh login failure does not block start" "$out" "warning: gh auth login fai
 mkdir -p "$ep/host-claude"
 (umask 077 && echo ctok >"$ep/host-claude/token")
 # shellcheck disable=SC2016  # expanded by the inner sh
-out=$(entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none}"')
-check "Claude token not in the shell's environment" "$out" "claude=none"
+out=$(entry sh -c 'echo "fd=${CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR:-none} read=$(cat <&9) env=$(env | grep -c ctok)"')
+check "Claude token on a descriptor, not in the environment" "$out" "fd=9 read=ctok env=0"
 [[ $(cat "$ep/claude-token") == ctok && $(stat -c %a "$ep/claude-token") == 600 && ! -e $ep/host-claude/token ]] \
     && pass "Claude token moved off the host" || fail "Claude token moved off the host" "$(ls -l "$ep/claude-token" "$ep/host-claude" 2>&1)"
-stub claude 'echo "claude $* token=${CLAUDE_CODE_OAUTH_TOKEN:-none} scrub=${CLAUDE_CODE_SUBPROCESS_ENV_SCRUB:-none}"'
-out=$(entry claude -c)
-check "devbox -- claude gets the token, scrubbed" "$out" "claude -c token=ctok scrub=1"
 rm "$ep/claude-token"
-out=$(entry claude)
-check "no Claude token, plain claude" "$out" "claude  token=none scrub=none"
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(entry sh -c 'echo "fd=${CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR:-none}"')
+check "no Claude token, no descriptor" "$out" "fd=none"
 # shellcheck disable=SC2016  # expanded by the inner sh
 out=$(entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none}"')
 check "no Claude token, none exported" "$out" "claude=none"

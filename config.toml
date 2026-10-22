@@ -68,9 +68,11 @@ sshd_keys = ".local/state/sshd"
 # Claude Code's per-project state, relative to home.
 projects_dir = ".claude/projects"
 # Where the entrypoint keeps the token from `devbox --register-claude-token`,
-# under /run/user/<uid> (not persisted). Never exported: only `claude` itself
-# gets it, from the entrypoint (`devbox -- claude`) or the dotfiles' zsh.
+# under /run/user/<uid> (not persisted). It is never in the environment:
+# the entrypoint (and the dotfiles' zshenv) open it on token_fd and export
+# CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR, which Claude Code reads it from.
 token_file = "claude-oauth-token"
+token_fd = 9
 # Where the launcher mounts a private host directory holding the token; the
 # entrypoint moves it out and deletes it.
 host_token_dir = "/run/host-claude"

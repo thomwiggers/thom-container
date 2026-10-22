@@ -69,11 +69,11 @@ name on the first line) in it or any parent. Precedence: `-p`,
   <profile>`). It is never put in an environment variable on the way in:
   `devbox` writes it to a private directory under `$TMPDIR`, mounted at
   `/run/host-claude`, and the entrypoint moves it to `/run/user/<uid>` (not
-  persisted) and deletes the host's copy. Only `claude` itself gets
-  `CLAUDE_CODE_OAUTH_TOKEN`, from the entrypoint (`devbox -- claude`) or the
-  dotfiles' zsh `claude` function, together with
-  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` so its Bash tool, hooks and MCP servers
-  don't inherit it. Other shells and processes don't see it.
+  persisted) and deletes the host's copy. Claude Code reads it from a file
+  descriptor: the entrypoint (and the dotfiles' zshenv, for attach and ssh
+  shells) opens it on fd 9 and exports
+  `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=9`, so no environment variable
+  holds the token itself.
 - **Claude Code** per-project state: every folder is mounted at `/project`, so
   the launcher mounts `~/.claude/projects/<host path>` over
   `~/.claude/projects/-project` to keep projects apart.
