@@ -15,11 +15,46 @@ key_src=/run/host-age/keys.txt
 dotfiles_dir=$home_dir/.config/home-manager
 authorized_keys=/run/user/$user_uid/authorized_keys
 marker=.thom-container-image
+nix_vol=/run/nix-state
 
 log() { echo "entrypoint: $*" >&2; }
 
+# Bind the profile's persistent Nix store over /nix, seeding it from the
+# image's /nix (still visible underneath until the mount) when it is empty or
+# belongs to another image. A new image gets a fresh store: its paths aren't
+# in the old one, and the Nix DB lives in there too. On any failure the
+# container just keeps the image's /nix.
+mount_nix() {
+    local image_id vol_id
+    mountpoint -q "$nix_vol" 2>/dev/null || return 0
+    chown "$user_uid:$user_gid" "$nix_vol" 2>/dev/null || true
+
+    image_id=$(cat "$home_seed/$marker" 2>/dev/null || echo unknown)
+    vol_id=$(cat "$nix_vol/$marker" 2>/dev/null || echo none)
+    if [ "$image_id" != "$vol_id" ]; then
+        log "seeding $nix_vol with the image's /nix (this takes a while)"
+        # Store paths are read-only; make them deletable first.
+        chmod -R u+w "$nix_vol" 2>/dev/null || true
+        find "$nix_vol" -mindepth 1 -delete 2>/dev/null || true
+        # As the user, so the copy works on a mount that refuses chown.
+        # Entries rather than "/nix/.", so the mount point keeps its own
+        # times and mode.
+        if setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+            bash -c 'shopt -s dotglob nullglob; cp -a /nix/* "$1"/' _ "$nix_vol"; then
+            echo "$image_id" > "$nix_vol/$marker"
+            chown "$user_uid:$user_gid" "$nix_vol/$marker" 2>/dev/null || true
+        else
+            log "warning: could not seed $nix_vol; using the image's /nix"
+            return 0
+        fi
+    fi
+    mount --bind "$nix_vol" /nix \
+        || log "warning: could not bind $nix_vol over /nix; using the image's /nix"
+}
+
 root_stage() {
     chown "$user_uid:$user_gid" "$home_dir" 2>/dev/null || true
+    mount_nix
 
     # Keep gpg-agent & co. from putting sockets in the virtiofs home.
     install -d -m 0700 -o "$user_uid" -g "$user_gid" "/run/user/$user_uid"

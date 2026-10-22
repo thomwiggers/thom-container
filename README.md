@@ -17,7 +17,7 @@ devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
 devbox --attach             # new shell in the running container; fail if none
 devbox --code               # open VS Code on /project in the running container (Remote-SSH)
-devbox --reset              # wipe the profile's persisted home (asks first)
+devbox --reset              # wipe the profile's persisted home and Nix store (asks first)
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
 devbox --docker             # also start dockerd inside (grants all capabilities)
@@ -34,6 +34,13 @@ name on the first line) in it or any parent. Precedence: `-p`,
   `~/.cache/thom-containers/<profile>`. On first start it is seeded from the
   image.
   Inside, `$THOM_CONTAINER_PROFILE` says which profile is active.
+- **Nix store** (`/nix`) is persisted per profile too, in
+  `~/.cache/thom-containers/<profile>.nix`, so `nix profile add` and Home
+  Manager builds survive the container. The entrypoint seeds it from the
+  image's `/nix` (slow, once) and bind-mounts it. A new image gets a fresh
+  store, dropping what was added since. Don't use two containers of one
+  profile for Nix at the same time: single-user Nix has no cross-container
+  locking. Nothing garbage-collects it; run `nix-collect-garbage -d`.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/age/keys.txt` exists on the host, it is mounted read-only and
   linked to the same path in the container, so the switch decrypts the
