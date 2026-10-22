@@ -42,6 +42,10 @@ name on the first line) in it or any parent. Precedence: `-p`,
   dropping what was added since. Don't use two containers of one
   profile for Nix at the same time: single-user Nix has no cross-container
   locking. Nothing garbage-collects it; run `nix-collect-garbage -d`.
+  After the dotfiles switch, the entrypoint warns and suggests `devbox --reset`
+  if `~/.nix-profile` dangles or `nix store ping` fails. The store is only
+  keyed on the dotfiles hash, so a rebuild that changes `/nix` otherwise (say
+  a new Nix version) keeps the old store until you `--reset`.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/age/keys.txt` exists on the host, it is mounted read-only and
   linked to the same path in the container, so the switch decrypts the
