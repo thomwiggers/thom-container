@@ -14,6 +14,7 @@ home_seed=/opt/home-seed
 key_src=/run/host-age/keys.txt
 dotfiles_dir=$home_dir/.config/home-manager
 authorized_keys=/run/user/$user_uid/authorized_keys
+claude_token=/run/user/$user_uid/claude-oauth-token
 marker=.thom-container-image
 # Identifies the image's /nix (see the Containerfile); Nix state in the home
 # and in the nix_vol volume is only valid for the same value.
@@ -241,6 +242,17 @@ user_stage() {
             log "warning: gh auth login failed; run it by hand"
         fi
         unset gh_token
+    fi
+
+    # Claude Code token from the host's Keychain (`devbox
+    # --register-claude-token`). Exported for the command; kept outside the
+    # persisted home for shells started later, which the dotfiles' zshenv
+    # gives it to.
+    if [ -n "${THOM_CONTAINER_CLAUDE_TOKEN:-}" ]; then
+        (umask 077 && printf '%s\n' "$THOM_CONTAINER_CLAUDE_TOKEN" > "$claude_token") \
+            || log "warning: could not write $claude_token; only this shell is logged in to Claude"
+        export CLAUDE_CODE_OAUTH_TOKEN=$THOM_CONTAINER_CLAUDE_TOKEN
+        unset THOM_CONTAINER_CLAUDE_TOKEN
     fi
 
     # Link to the host's key rather than copying it into the persisted home.

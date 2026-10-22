@@ -21,6 +21,7 @@ devbox --reset              # wipe the profile's persisted home and Nix store (a
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
 devbox --docker             # also start dockerd inside (grants all capabilities)
+devbox -p work --register-claude-token  # store a `claude setup-token` token for the profile
 ```
 
 Running `devbox` again for the same folder and profile attaches a new shell
@@ -59,6 +60,15 @@ name on the first line) in it or any parent. Precedence: `-p`,
   a tmpfs, so the token is never written to the persisted home. Pick an
   account per profile under `[host.github_users]` in `config.toml`; skip with
   `--no-gh`.
+- **Claude Code login**: the host's `claude` can only hand out a token for
+  the account it is signed in to, so tokens are registered per profile by
+  hand: run `claude setup-token` signed in to that profile's account, then
+  `devbox -p <profile> --register-claude-token` and paste it. It goes in the
+  login Keychain (service `thom-container-claude`, account = profile; delete
+  with `security delete-generic-password -s thom-container-claude -a
+  <profile>`). New containers get it, the entrypoint exports it as
+  `CLAUDE_CODE_OAUTH_TOKEN` and keeps it in `/run/user/<uid>` (not persisted)
+  for shells started later, which the dotfiles' zshenv picks it up in.
 - **Claude Code** per-project state: every folder is mounted at `/project`, so
   the launcher mounts `~/.claude/projects/<host path>` over
   `~/.claude/projects/-project` to keep projects apart.

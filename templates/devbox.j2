@@ -26,6 +26,7 @@ docker=${THOM_CONTAINER_DOCKER:-}
 code_bin=${THOM_CONTAINER_CODE:-code}
 gh_token={{ "1" if host.gh_token else "" }}
 [[ -n ${THOM_CONTAINER_NO_GH:-} ]] && gh_token=
+claude_service={{ host.claude_keychain_service }}
 typeset -A github_users=(
 {% for p, u in host.github_users.items() %}
     {{ p }} {{ u }}
@@ -64,6 +65,10 @@ Options:
                       container (its own VM) [env: THOM_CONTAINER_DOCKER=1]
       --no-gh         Don't pass the host's \`gh auth token\` in to log in
                       to GitHub [env: THOM_CONTAINER_NO_GH=1]
+      --register-claude-token
+                      Store a Claude Code token (from \`claude setup-token\`,
+                      signed in to the profile's account) in the Keychain and
+                      exit; containers of the profile log in with it
       --image IMAGE   Image to run (default: $image) [env: THOM_CONTAINER_IMAGE]
   -h, --help          Show this help
 
@@ -105,6 +110,7 @@ self_update() {
 
 pull=
 attach=
+register_claude=
 open_code=
 reset=
 dir=
@@ -141,6 +147,10 @@ while (( $# )); do
             ;;
         --no-gh)
             gh_token=
+            shift
+            ;;
+        --register-claude-token)
+            register_claude=1
             shift
             ;;
         --image)
@@ -186,6 +196,29 @@ fi
 
 (( ${profiles[(Ie)$profile]} )) \
     || die "unknown profile '$profile' (known: ${profiles[*]}; add it to config.toml)"
+
+register_claude_token() {
+    local token
+    (( $+commands[security] )) || die "'security' not found; the Claude token is kept in the macOS Keychain"
+    print -r -- "Run 'claude setup-token' signed in to the account for profile '$profile'." >&2
+    print -rn -- "Paste the token: " >&2
+    read -rs token || token=
+    print >&2
+    token=${${token## #}%% #}
+    [[ -n $token ]] || die "no token given"
+    # It goes on security's command line below, which must stay one word.
+    [[ $token != *[^A-Za-z0-9_-]* ]] || die "that does not look like a token from 'claude setup-token'"
+    # Via stdin (-i), so the token doesn't show up in ps.
+    print -r -- "add-generic-password -U -a $profile -s $claude_service -w $token" | security -i
+    security find-generic-password -a "$profile" -s "$claude_service" >/dev/null 2>&1 \
+        || die "could not store the token in the Keychain"
+    print -r -- "Stored the Claude token for profile '$profile'; new containers log in with it." >&2
+}
+
+if [[ -n $register_claude ]]; then
+    register_claude_token
+    exit 0
+fi
 
 (( $+commands[container] )) \
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
@@ -311,6 +344,14 @@ if [[ -n $gh_token ]] && (( $+commands[gh] )); then
     else
         print -r -- "warning: 'gh ${gh_args[*]}' failed; not logging in to GitHub" >&2
     fi
+fi
+
+# Claude Code token from --register-claude-token, if any. The entrypoint
+# exports it as CLAUDE_CODE_OAUTH_TOKEN.
+if (( $+commands[security] )) \
+    && token=$(security find-generic-password -a "$profile" -s "$claude_service" -w 2>/dev/null) \
+    && [[ -n $token ]]; then
+    env_args+=(-e "THOM_CONTAINER_CLAUDE_TOKEN=$token")
 fi
 
 # Just the file: mounting ~/.ssh would expose the private keys.

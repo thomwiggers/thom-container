@@ -60,6 +60,12 @@ stub gh 'case "$1 $2" in
     "auth token") [ -n "${GH_FAIL:-}" ] && exit 1; [ "${3:-}" = --user ] && echo "tok-$4" || echo tok ;;
     "auth login") echo "gh $* stdin=$(cat)"; [ -z "${GH_FAIL:-}" ] ;;
 esac'
+# Keychain: find -w prints CLAUDE_TOKEN-<account> when CLAUDE_TOKEN is set,
+# -i echoes the commands it read from stdin.
+stub security 'case $1 in
+    find-generic-password) [ -n "${CLAUDE_TOKEN:-}" ] || exit 44; [ "${6:-}" != -w ] || echo "$CLAUDE_TOKEN-$3" ;;
+    -i) echo "security -i stdin=$(cat)" ;;
+esac'
 stub ssh-add 'if [ -n "${AGENT_EMPTY:-}" ]; then echo "The agent has no identities."; exit 1; fi
 echo "ssh-ed25519 AAAAkey1 first"; echo "ssh-ed25519 AAAAkey2 second"'
 stub curl 'while [ $# -gt 1 ]; do [ "$1" = -o ] && { cp "$FAKE_DOWNLOAD" "$2"; exit 0; }; shift; done; exit 22'
@@ -67,7 +73,7 @@ command -v shasum >/dev/null || stub shasum 'sha256sum'
 
 export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm
 unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER \
-    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN
+    THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN THOM_CONTAINER_CLAUDE_TOKEN CLAUDE_CODE_OAUTH_TOKEN
 
 devbox() { (cd "$work/My Proj" && zsh -f "$repo/bin/devbox" "$@" 2>&1); }
 state="$work/home/.cache/thom-containers"
@@ -176,6 +182,24 @@ out=$(GH_FAIL=1 devbox)
 check "host gh not logged in" "$out" \
     "warning: 'gh auth token' failed" "container run" "!THOM_CONTAINER_GH_TOKEN"
 
+echo "Claude token"
+out=$(devbox)
+check "no Claude token registered" "$out" "container run" "!THOM_CONTAINER_CLAUDE_TOKEN"
+out=$(CLAUDE_TOKEN=ctok devbox -p work)
+check "passes the profile's Claude token" "$out" "-e THOM_CONTAINER_CLAUDE_TOKEN=ctok-work "
+out=$(CLAUDE_TOKEN=ctok RUNNING=1 devbox)
+check "attach does not pass the Claude token" "$out" "container exec" "!THOM_CONTAINER_CLAUDE_TOKEN"
+out=$(CLAUDE_TOKEN=x devbox -p work --register-claude-token <<<'  sk-ant-oat01-Ab_c-1  ')
+check "--register-claude-token" "$out" \
+    "security -i stdin=add-generic-password -U -a work -s thom-container-claude -w sk-ant-oat01-Ab_c-1" \
+    "Stored the Claude token for profile 'work'" "!container run"
+out=$(devbox --register-claude-token <<<'tok"; delete-keychain') && fail "--register-claude-token rejects odd input" "exit 0" \
+    || check "--register-claude-token rejects odd input" "$out" "does not look like a token" "!security -i"
+out=$(devbox --register-claude-token </dev/null) && fail "--register-claude-token needs a token" "exit 0" \
+    || check "--register-claude-token needs a token" "$out" "no token given" "!security -i"
+out=$(devbox --register-claude-token <<<tok) && fail "--register-claude-token checks the Keychain" "exit 0" \
+    || check "--register-claude-token checks the Keychain" "$out" "security -i" "could not store the token"
+
 out=$(devbox -p nope) && fail "rejects unknown profile" "exit 0" \
     || check "rejects unknown profile" "$out" "unknown profile 'nope'"
 
@@ -230,6 +254,7 @@ sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^home_seed=.*#home_seed=$ep/seed#" \
     -e "s#^key_src=.*#key_src=$ep/key/keys.txt#" \
     -e "s#^authorized_keys=.*#authorized_keys=$ep/authorized_keys#" \
+    -e "s#^claude_token=.*#claude_token=$ep/claude-token#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -308,6 +333,17 @@ check "logs in to GitHub, token not leaked to the shell" "$out" \
 
 out=$(GH_FAIL=1 THOM_CONTAINER_GH_TOKEN=secret entry)
 check "gh login failure does not block start" "$out" "warning: gh auth login failed" "DONE"
+
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(THOM_CONTAINER_CLAUDE_TOKEN=ctok entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none} leak=${THOM_CONTAINER_CLAUDE_TOKEN:-none}"')
+check "Claude token exported, not leaked" "$out" "claude=ctok leak=none"
+[[ $(cat "$ep/claude-token") == ctok && $(stat -c %a "$ep/claude-token") == 600 ]] \
+    && pass "Claude token kept for later shells" || fail "Claude token kept for later shells" "$(ls -l "$ep/claude-token" 2>&1)"
+rm "$ep/claude-token"
+# shellcheck disable=SC2016  # expanded by the inner sh
+out=$(entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none}"')
+check "no Claude token, none exported" "$out" "claude=none"
+[[ ! -e $ep/claude-token ]] && pass "no Claude token file without a token" || fail "no Claude token file without a token" "exists"
 
 # A copy error (here: an unreadable file) must warn, not stop the start.
 rm "$ep/home/.thom-container-image"
