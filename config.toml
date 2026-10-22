@@ -67,6 +67,15 @@ sshd_keys = ".local/state/sshd"
 [claude]
 # Claude Code's per-project state, relative to home.
 projects_dir = ".claude/projects"
+# Where the entrypoint keeps the token from `devbox --register-claude-token`,
+# under /run/user/<uid> (not persisted). It is never in the environment:
+# the entrypoint (and the dotfiles' zshenv) open it on token_fd and export
+# CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR, which Claude Code reads it from.
+token_file = "claude-oauth-token"
+token_fd = 9
+# Where the launcher mounts a private host directory holding the token; the
+# entrypoint moves it out and deletes it.
+host_token_dir = "/run/host-claude"
 
 [host]
 # Persistent home for profile <p> lives at <state_root>/<p>, its Nix store at
@@ -91,6 +100,10 @@ name_prefix = "dev"
 dns_domain = "devbox"
 # Pass the host's `gh auth token` into the container, which logs in with it.
 gh_token = true
+# macOS Keychain service holding each profile's Claude Code token (from
+# `claude setup-token`), with the profile as the account name. Set with
+# `devbox -p <profile> --register-claude-token`.
+claude_keychain_service = "thom-container-claude"
 
 # Optional GitHub account per profile, for `gh auth token --user <name>` when
 # the host gh is logged in to several. Profiles not listed use the active one.

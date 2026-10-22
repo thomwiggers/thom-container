@@ -14,6 +14,8 @@ home_seed=/opt/home-seed
 key_src=/run/host-age/keys.txt
 dotfiles_dir=$home_dir/.config/home-manager
 authorized_keys=/run/user/$user_uid/authorized_keys
+claude_token=/run/user/$user_uid/claude-oauth-token
+claude_src=/run/host-claude/token
 marker=.thom-container-image
 # Identifies the image's /nix (see the Containerfile); Nix state in the home
 # and in the nix_vol volume is only valid for the same value.
@@ -243,6 +245,16 @@ user_stage() {
         unset gh_token
     fi
 
+    # Claude Code token from the host's Keychain (`devbox
+    # --register-claude-token`). Moved out of the host directory (deleting the
+    # host's copy) to outside the persisted home; see the end for how claude
+    # gets it.
+    if [ -f "$claude_src" ]; then
+        (umask 077 && cp "$claude_src" "$claude_token") \
+            || log "warning: could not copy the Claude token; not logged in to Claude"
+        rm -f "$claude_src" || log "warning: could not delete the Claude token on the host"
+    fi
+
     # Link to the host's key rather than copying it into the persisted home.
     # Without it, the dotfiles' secrets module skips decryption.
     local key_link="$home_dir/.config/age/keys.txt"
@@ -285,6 +297,13 @@ user_stage() {
 
     check_nix
 
+    # Claude Code reads the token from this descriptor, so it never has to be
+    # in an environment variable. Shells started later (attach, ssh) get the
+    # same from the dotfiles' zshenv.
+    if [ -s "$claude_token" ]; then
+        exec 9<"$claude_token"
+        export CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=9
+    fi
     exec "$@"
 }
 
