@@ -35,9 +35,10 @@ name on the first line) in it or any parent. Precedence: `-p`,
   `~/.cache/thom-containers/<profile>`. On first start it is seeded from the
   image.
   Inside, `$THOM_CONTAINER_PROFILE` says which profile is active.
-- **Nix store** (`/nix`) is persisted per profile too, in
-  `~/.cache/thom-containers/<profile>.nix`, so `nix profile add` and Home
-  Manager builds survive the container. The entrypoint seeds it from the
+- **Nix store** (`/nix`) is persisted per profile too, in the container
+  volume `dev-<profile>-nix` (ext4: the store has paths differing only in
+  case, which a case-insensitive macOS folder can't hold), so `nix profile
+  add` and Home Manager builds survive the container. The entrypoint seeds it from the
   image's `/nix` (slow, once) and bind-mounts it. The store is replaced when
   the image's `/nix` changes (the dotfiles hash, so not on every rebuild),
   dropping what was added since. Don't use two containers of one

@@ -51,6 +51,16 @@ mount_nix() {
     nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
     vol_id=$(cat "$nix_vol/$nix_marker" 2>/dev/null || echo none)
     if [ "$nix_id" != "$vol_id" ]; then
+        # The store has paths differing only in case; a case-insensitive
+        # mount (a macOS host directory) can't hold it.
+        rm -f "$nix_vol/.case-probe" "$nix_vol/.CASE-PROBE"
+        if touch "$nix_vol/.case-probe" && [ -e "$nix_vol/.CASE-PROBE" ]; then
+            rm -f "$nix_vol/.case-probe"
+            log "warning: $nix_vol is case-insensitive; using the image's /nix"
+            log "  (update devbox: it now keeps the store in a container volume)"
+            return 0
+        fi
+        rm -f "$nix_vol/.case-probe"
         log "seeding $nix_vol with the image's /nix (this takes a while)"
         # Store paths are read-only; make them deletable first.
         chmod -R u+w "$nix_vol" 2>/dev/null || true
