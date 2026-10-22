@@ -62,8 +62,9 @@ name on the first line) in it or any parent. Precedence: `-p`,
   entrypoint authorizes the public keys of the forwarded SSH agent
   (`ssh-add -L`). `devbox` prints `ssh: thom@<name>.devbox` when it starts a
   container; connect with `ssh` or VS Code's Remote-SSH, which installs its
-  server in the persisted home. The container is `--rm` and the `devbox`
-  terminal is its main process, so closing that terminal ends the session.
+  server in the persisted home. The container is `--rm` and ends with its
+  main process, but when the shell or command exits the entrypoint waits
+  while ssh sessions (VS Code) are open; Ctrl-C stops it anyway.
   See [SSH access](#ssh-access) for the one-time setup on the Mac.
 - **Docker**: `--docker` adds `--cap-add ALL` and starts `dockerd`. Each Apple
   container is its own VM, so this doesn't loosen isolation from the Mac.

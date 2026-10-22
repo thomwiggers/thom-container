@@ -61,9 +61,26 @@ root_stage() {
             || log "warning: could not make $SSH_AUTH_SOCK accessible"
     fi
 
-    exec setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups "${cap_args[@]}" \
+    # Not exec'd: when the command ends, stay up while ssh sessions (VS Code
+    # Remote-SSH) are open, since the container ends with this process. With
+    # a terminal, job control gives the command its own process group and
+    # takes the terminal back afterwards, so Ctrl-C reaches us again.
+    [ -t 0 ] && set -m
+    local status=0
+    setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups "${cap_args[@]}" \
         env HOME="$home_dir" USER="$user_name" LOGNAME="$user_name" SHELL={{ user.shell }} \
-        "$0" --user-stage "$@"
+        "$0" --user-stage "$@" || status=$?
+    if ssh_sessions; then
+        log "command exited ($status); staying up while ssh sessions are open (Ctrl-C to stop)"
+        while ssh_sessions; do sleep 2; done
+    fi
+    exit "$status"
+}
+
+# Whether $user_name has an ssh session: sshd's per-session processes are
+# titled "sshd: user [priv]" and "sshd: user@pts/0" (or @notty).
+ssh_sessions() {
+    pgrep -f "sshd: $user_name(@| \\[)" >/dev/null
 }
 
 # sshd, for Remote-SSH from the Mac. Arguments: a setpriv prefix, if any.
