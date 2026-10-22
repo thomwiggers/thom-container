@@ -127,9 +127,15 @@ RUN echo "claude cache bust: ${CLAUDE_CACHE_BUST}" \
 # entrypoint seeds it from this copy on first start.
 USER root
 ARG IMAGE_ID=unknown
+# .thom-container-nix identifies the /nix contents: the dotfiles hash changes
+# exactly when the Home Manager layer is rebuilt, so unlike IMAGE_ID it stays
+# put across rebuilds that leave the store alone (a local build without
+# DOTFILES_HASH falls back to IMAGE_ID).
 RUN cp -a {{ container.home }} {{ container.home_seed }} \
  && echo "${IMAGE_ID}" > {{ container.home_seed }}/.thom-container-image \
- && chown {{ user.uid }}:{{ user.gid }} {{ container.home_seed }}/.thom-container-image
+ && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=${IMAGE_ID}; else nix_id=${DOTFILES_HASH}; fi \
+ && echo "${nix_id}" > {{ container.home_seed }}/.thom-container-nix \
+ && chown {{ user.uid }}:{{ user.gid }} {{ container.home_seed }}/.thom-container-image {{ container.home_seed }}/.thom-container-nix
 
 # sshd for VS Code Remote-SSH and the like, reached as <name>.<dns_domain>
 # from the Mac. Installed after the slow layers above so they stay cached.

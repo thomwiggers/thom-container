@@ -54,8 +54,8 @@ Options:
       --code          Open VS Code on {{ container.project }} in the running container
                       over Remote-SSH (<name>.{{ host.dns_domain }}); fail if there is none
                       [env: THOM_CONTAINER_CODE=<code command>]
-      --reset         Delete the profile's persisted home after asking, so it
-                      is re-seeded from the image; refuses if any container
+      --reset         Delete the profile's persisted home and Nix store after
+                      asking, so they are re-seeded from the image; refuses if any container
                       of the profile is running
       --pull          Pull the image before starting
       --self-update   Update this script (git pull if it lives in a clone,
@@ -191,6 +191,7 @@ fi
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
 home_state="$state_root/$profile"
+nix_state="$home_state.nix"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
 slug=${${(L)dir:t}//[^a-z0-9-]/-}
@@ -218,11 +219,12 @@ if [[ -n $reset ]]; then
         print -rn -- "Delete $home_state (all of profile '$profile')? [y/N] "
         read -r reply || reply=
         [[ $reply == [yY]* ]] || die "aborted"
-        rm -rf -- "$home_state"
+        # The Nix store goes too: the home's profile links point into it.
+        rm -rf -- "$home_state" "$nix_state"
         print -r -- "Reset $home_state"
     fi
 fi
-mkdir -p "$home_state"
+mkdir -p "$home_state" "$nix_state"
 
 # Claude Code keys per-project state (sessions, memory) on the working
 # directory, which is always {{ container.project }}. Mount the directory
@@ -267,6 +269,7 @@ run_args=(
     --cpus "$cpus"
     --memory "$memory"
     --volume "$home_state:{{ container.home }}"
+    --volume "$nix_state:{{ container.nix_state_mount }}"
     --volume "$claude_projects:{{ container.home }}/{{ claude.projects_dir }}/{{ container.project | claude_slug }}"
     --volume "$dir:{{ container.project }}"
     --workdir {{ container.project }}

@@ -15,11 +15,64 @@ key_src={{ container.key_dir }}/{{ container.key_file }}
 dotfiles_dir=$home_dir/{{ dotfiles.dir }}
 authorized_keys=/run/user/$user_uid/authorized_keys
 marker=.thom-container-image
+# Identifies the image's /nix (see the Containerfile); Nix state in the home
+# and in the nix_vol volume is only valid for the same value.
+nix_marker=.thom-container-nix
+nix_vol={{ container.nix_state_mount }}
 
 log() { echo "entrypoint: $*" >&2; }
 
+# After the switch: the persisted home links into the persisted /nix, and
+# the two can drift apart (an interrupted seeding, a store deleted by hand).
+# Only the host can wipe them, so say how.
+check_nix() {
+    local profile
+    profile=$(readlink -f "$home_dir/.nix-profile" 2>/dev/null || true)
+    if [ ! -e "$profile" ] || ! nix store ping >/dev/null 2>&1; then
+        log "warning: the Nix store or ~/.nix-profile looks broken; if rerunning"
+        log "  'home-manager switch' doesn't fix it, exit and run 'devbox --reset' on"
+        log "  the host (wipes this profile's home and Nix store)"
+    fi
+}
+
+# Bind the profile's persistent Nix store over /nix, seeding it from the
+# image's /nix (still visible underneath until the mount) when it is empty or
+# was seeded from a different /nix. Then the store is replaced: the new
+# paths aren't in the old Nix DB, which lives in there too. An image rebuilt
+# with the same /nix keeps the store. On any failure the container just
+# keeps the image's /nix.
+mount_nix() {
+    local nix_id vol_id
+    mountpoint -q "$nix_vol" 2>/dev/null || return 0
+    chown "$user_uid:$user_gid" "$nix_vol" 2>/dev/null || true
+
+    nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
+    vol_id=$(cat "$nix_vol/$nix_marker" 2>/dev/null || echo none)
+    if [ "$nix_id" != "$vol_id" ]; then
+        log "seeding $nix_vol with the image's /nix (this takes a while)"
+        # Store paths are read-only; make them deletable first.
+        chmod -R u+w "$nix_vol" 2>/dev/null || true
+        find "$nix_vol" -mindepth 1 -delete 2>/dev/null || true
+        # As the user, so the copy works on a mount that refuses chown.
+        # Entries rather than "/nix/.", so the mount point keeps its own
+        # times and mode.
+        # shellcheck disable=SC2016  # $1 is for the inner bash
+        if setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+            bash -c 'shopt -s dotglob nullglob; cp -a /nix/* "$1"/' _ "$nix_vol"; then
+            echo "$nix_id" > "$nix_vol/$nix_marker"
+            chown "$user_uid:$user_gid" "$nix_vol/$nix_marker" 2>/dev/null || true
+        else
+            log "warning: could not seed $nix_vol; using the image's /nix"
+            return 0
+        fi
+    fi
+    mount --bind "$nix_vol" /nix \
+        || log "warning: could not bind $nix_vol over /nix; using the image's /nix"
+}
+
 root_stage() {
     chown "$user_uid:$user_gid" "$home_dir" 2>/dev/null || true
+    mount_nix
 
     # Keep gpg-agent & co. from putting sockets in the virtiofs home.
     install -d -m 0700 -o "$user_uid" -g "$user_gid" "/run/user/$user_uid"
@@ -124,7 +177,7 @@ start_dockerd() {
 }
 
 user_stage() {
-    local image_id home_id agent_keys
+    local nix_id home_id agent_keys
     if [ ! -e "$home_dir/$marker" ]; then
         # As the user, so the copy works on a mount that refuses chown.
         log "seeding $home_dir from image (existing files are kept)"
@@ -139,13 +192,13 @@ user_stage() {
         ) || log "warning: some files could not be copied completely; continuing"
     fi
 
-    image_id=$(cat "$home_seed/$marker" 2>/dev/null || echo unknown)
-    home_id=$(cat "$home_dir/$marker" 2>/dev/null || echo none)
-    if [ "$image_id" != "$home_id" ]; then
-        # New image: /nix came from the image, so the profile links in the
-        # persisted home point at store paths that no longer exist. Take the
-        # image's links; the switch below relinks the rest.
-        log "image changed ($home_id -> $image_id); refreshing Nix profiles"
+    nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
+    home_id=$(cat "$home_dir/$nix_marker" 2>/dev/null || echo none)
+    if [ "$nix_id" != "$home_id" ]; then
+        # Different /nix: the profile links in the persisted home point at
+        # store paths that may no longer exist. Take the image's links; the
+        # switch below relinks the rest.
+        log "Nix store changed ($home_id -> $nix_id); refreshing Nix profiles"
         local p
         for p in {% for d in container.nix_state %}"{{ d }}" {% endfor %}; do
             rm -rf "${home_dir:?}/$p"
@@ -154,7 +207,7 @@ user_stage() {
                 cp -a "$home_seed/$p" "$home_dir/$p" || log "warning: could not refresh $p"
             fi
         done
-        echo "$image_id" > "$home_dir/$marker"
+        echo "$nix_id" > "$home_dir/$nix_marker"
     fi
 
     # Which devbox profile this home belongs to, for prompts and scripts.
@@ -215,6 +268,8 @@ user_stage() {
             log "warning: home-manager switch failed; continuing (rerun: home-manager switch)"
         fi
     fi
+
+    check_nix
 
     exec "$@"
 }
