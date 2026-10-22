@@ -224,7 +224,10 @@ fi
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
 home_state="$state_root/$profile"
-nix_state="$home_state.nix"
+# A container volume (ext4), not a host directory: macOS file systems are
+# usually case-insensitive, and the Nix store has paths differing only in
+# case (terminfo/a and terminfo/A).
+nix_volume="{{ host.name_prefix }}-$profile-nix"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
 slug=${${(L)dir:t}//[^a-z0-9-]/-}
@@ -248,16 +251,30 @@ if [[ -n $reset ]]; then
     running=(${(M)running:#{{ host.name_prefix }}-$profile-*})
     (( $#running )) \
         && die "containers using profile '$profile' are running (${(j:, :)running}); exit them before --reset"
-    if [[ -d $home_state ]]; then
-        print -rn -- "Delete $home_state (all of profile '$profile')? [y/N] "
+    if [[ -d $home_state ]] || container volume inspect "$nix_volume" >/dev/null 2>&1; then
+        print -rn -- "Delete $home_state and volume $nix_volume (all of profile '$profile')? [y/N] "
         read -r reply || reply=
         [[ $reply == [yY]* ]] || die "aborted"
         # The Nix store goes too: the home's profile links point into it.
-        rm -rf -- "$home_state" "$nix_state"
+        rm -rf -- "$home_state"
+        if container volume inspect "$nix_volume" >/dev/null 2>&1; then
+            container volume delete "$nix_volume" >/dev/null \
+                || die "could not delete volume $nix_volume"
+        fi
         print -r -- "Reset $home_state"
     fi
 fi
-mkdir -p "$home_state" "$nix_state"
+mkdir -p "$home_state"
+container volume inspect "$nix_volume" >/dev/null 2>&1 \
+    || container volume create "$nix_volume" >/dev/null \
+    || die "could not create volume $nix_volume for the Nix store"
+# Earlier versions kept the store in a host directory, where seeding fails
+# on the case clashes; nothing uses it any more.
+if [[ -d $home_state.nix ]]; then
+    print -r -- "Removing the unused Nix store $home_state.nix" >&2
+    chmod -R u+w "$home_state.nix" 2>/dev/null
+    rm -rf -- "$home_state.nix"
+fi
 
 # Claude Code keys per-project state (sessions, memory) on the working
 # directory, which is always {{ container.project }}. Mount the directory
@@ -302,7 +319,7 @@ run_args=(
     --cpus "$cpus"
     --memory "$memory"
     --volume "$home_state:{{ container.home }}"
-    --volume "$nix_state:{{ container.nix_state_mount }}"
+    --volume "$nix_volume:{{ container.nix_state_mount }}"
     --volume "$claude_projects:{{ container.home }}/{{ claude.projects_dir }}/{{ container.project | claude_slug }}"
     --volume "$dir:{{ container.project }}"
     --workdir {{ container.project }}

@@ -46,7 +46,7 @@ mkdir -p "$work/bin" "$work/home/.config/age" "$work/My Proj"
 : >"$work/home/.config/age/keys.txt"
 mkdir -p "$work/home/.ssh"
 echo "github.com ssh-ed25519 AAAA" >"$work/home/.ssh/known_hosts"
-stub container 'echo "container $*"; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; [ "$1 $2 $3" = "system dns list" ] && echo "${DNS_DOMAINS:-}"; exit 0'
+stub container 'if [ "$1" = volume ]; then echo "container $*" >&2; else echo "container $*"; fi; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "volume inspect" ] && { [ -n "${VOLUME:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; [ "$1 $2 $3" = "system dns list" ] && echo "${DNS_DOMAINS:-}"; exit 0'
 stub sysctl 'echo 10'
 stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
 stub git 'echo "git $*"'
@@ -88,7 +88,7 @@ check "run with defaults" "$out" \
     "container run -i -e TERM=xterm " "--rm --init --name dev-private-my-proj-" \
     "--cpus 10 --memory 8G" \
     "--volume $state/private:/home/thom" \
-    "--volume $state/private.nix:/run/nix-state" \
+    "--volume dev-private-nix:/run/nix-state" "container volume create dev-private-nix" \
     "--volume $state/private/.claude/projects/$claude_dir:/home/thom/.claude/projects/-project" \
     "--volume $proj:/project --workdir /project" \
     "--tmpfs /home/thom/.ssh/sockets" \
@@ -153,15 +153,25 @@ rm "$proj/.thom-container-profile"
 echo "--reset"
 out=$(LISTED=$'dev-work-x-1\ndev-private-other-1' devbox --reset </dev/null) && fail "--reset refuses while running" "exit 0" \
     || check "--reset refuses while running" "$out" "dev-private-other-1" "!dev-work-x-1" "are running"
-touch "$state/private/marker" "$state/private.nix/marker"
-out=$(devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
-    || check "--reset aborts on no" "$out" "aborted"
-[[ -e $state/private/marker && -e $state/private.nix/marker ]] \
-    && pass "home and store kept on abort" || fail "home and store kept on abort" "marker gone"
-out=$(devbox --reset <<<y)
-check "--reset wipes and restarts" "$out" "Reset $state/private" "container run"
-[[ ! -e $state/private/marker && ! -e $state/private.nix/marker ]] \
-    && pass "home and store wiped" || fail "home and store wiped" "marker still there"
+touch "$state/private/marker"
+out=$(VOLUME=1 devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
+    || check "--reset aborts on no" "$out" "aborted" "!volume delete"
+[[ -e $state/private/marker ]] \
+    && pass "home kept on abort" || fail "home kept on abort" "marker gone"
+out=$(VOLUME=1 devbox --reset <<<y)
+check "--reset wipes and restarts" "$out" "Reset $state/private" \
+    "container volume delete dev-private-nix" "!volume create" "container run"
+[[ ! -e $state/private/marker ]] \
+    && pass "home wiped" || fail "home wiped" "marker still there"
+rm -rf "$state/private"
+out=$(VOLUME=1 devbox --reset <<<y)
+check "--reset wipes a volume without a home" "$out" "container volume delete dev-private-nix"
+mkdir -p "$state/private.nix/store/x"
+chmod a-w "$state/private.nix/store/x" "$state/private.nix/store"
+out=$(VOLUME=1 devbox)
+check "old host-dir store removed" "$out" "Removing the unused Nix store"
+[[ ! -e $state/private.nix ]] \
+    && pass "old host-dir store gone" || fail "old host-dir store gone" "still there"
 
 out=$(SSH_AUTH_SOCK='' devbox)
 check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh" "!ssh: thom@"
