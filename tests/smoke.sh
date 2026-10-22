@@ -46,7 +46,7 @@ mkdir -p "$work/bin" "$work/home/.config/age" "$work/My Proj"
 : >"$work/home/.config/age/keys.txt"
 mkdir -p "$work/home/.ssh"
 echo "github.com ssh-ed25519 AAAA" >"$work/home/.ssh/known_hosts"
-stub container 'echo "container $*"; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; exit 0'
+stub container 'echo "container $*"; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; [ "$1 $2 $3" = "system dns list" ] && echo "${DNS_DOMAINS:-}"; exit 0'
 stub sysctl 'echo 10'
 stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
 stub git 'echo "git $*"'
@@ -60,6 +60,8 @@ stub gh 'case "$1 $2" in
     "auth token") [ -n "${GH_FAIL:-}" ] && exit 1; [ "${3:-}" = --user ] && echo "tok-$4" || echo tok ;;
     "auth login") echo "gh $* stdin=$(cat)"; [ -z "${GH_FAIL:-}" ] ;;
 esac'
+stub ssh-add 'if [ -n "${AGENT_EMPTY:-}" ]; then echo "The agent has no identities."; exit 1; fi
+echo "ssh-ed25519 AAAAkey1 first"; echo "ssh-ed25519 AAAAkey2 second"'
 stub curl 'while [ $# -gt 1 ]; do [ "$1" = -o ] && { cp "$FAKE_DOWNLOAD" "$2"; exit 0; }; shift; done; exit 22'
 command -v shasum >/dev/null || stub shasum 'sha256sum'
 
@@ -90,7 +92,8 @@ check "run with defaults" "$out" \
     "--cap-add CAP_SYS_ADMIN" \
     "-e THOM_CONTAINER_HOSTNAME=devbox-my-proj " \
     "ghcr.io/thomwiggers/thom-container:latest" \
-    "!--cap-add ALL"
+    "!--cap-add ALL" \
+    "ssh: thom@dev-private-my-proj-" ".devbox"
 [[ -d "$state/private/.claude/projects/$claude_dir" ]] \
     && pass "creates per-project Claude dir" \
     || fail "creates per-project Claude dir" "$state/private/.claude/projects/$claude_dir missing"
@@ -110,6 +113,17 @@ out=$(devbox --attach) && fail "--attach without a container fails" "exit 0" \
     || check "--attach without a container fails" "$out" "no running container" "!container run"
 out=$(RUNNING=1 devbox --attach -- ls)
 check "--attach with a running container" "$out" "container exec" "dev-private-my-proj-" " ls" "!container run"
+
+stub code 'echo "code $*"'
+out=$(RUNNING=1 devbox --code)
+check "--code opens VS Code over Remote-SSH" "$out" \
+    "code --remote ssh-remote+thom@dev-private-my-proj-" ".devbox /project" "!container run" "!container exec"
+out=$(devbox --code) && fail "--code without a container fails" "exit 0" \
+    || check "--code without a container fails" "$out" "no running container" "!code --remote"
+out=$(RUNNING=1 devbox --code --attach) && fail "--code with --attach fails" "exit 0" \
+    || check "--code with --attach fails" "$out" "cannot be combined"
+out=$(RUNNING=1 THOM_CONTAINER_CODE=nope devbox --code) && fail "--code without the code command fails" "exit 0" \
+    || check "--code without the code command fails" "$out" "'nope' not found"
 
 echo "profile file"
 printf '  work  \n' >"$proj/.thom-container-profile"
@@ -139,7 +153,7 @@ check "--reset wipes and restarts" "$out" "Reset $state/private" "container run"
 [[ ! -e $state/private/marker ]] && pass "home wiped" || fail "home wiped" "marker still there"
 
 out=$(SSH_AUTH_SOCK='' devbox)
-check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh"
+check "no SSH agent" "$out" "warning: SSH_AUTH_SOCK not set" "!--ssh" "!ssh: thom@"
 
 mv "$work/home/.ssh/known_hosts" "$work/known_hosts.bak"
 out=$(devbox)
@@ -188,6 +202,13 @@ check "install from clone" "$out" \
 [[ -d $state/private && -d $state/work ]] \
     && pass "profile homes created" || fail "profile homes created" "$(ls "$state")"
 
+out=$(DNS_DOMAINS=devbox zsh -f "$repo/install.sh" --no-pull 2>&1)
+check "install with the devbox DNS domain registered" "$out" "!is not registered" "!sudo container system dns create"
+out=$(DNS_DOMAINS=other zsh -f "$repo/install.sh" --no-pull 2>&1)
+check "install without the devbox DNS domain" "$out" \
+    "DNS domain 'devbox' is not registered" "sudo container system dns create devbox" \
+    "[dns]  domain = \"devbox\"" "container system stop"
+
 rm -f "$work/home/.local/bin/devbox"
 out=$(cd "$work" && FAKE_DOWNLOAD="$repo/bin/devbox" zsh -f -s -- --no-pull <"$repo/install.sh" 2>&1)
 check "install piped from curl" "$out" "downloaded from" "!container image pull"
@@ -204,6 +225,7 @@ echo secret >"$ep/key/keys.txt"
 sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^home_seed=.*#home_seed=$ep/seed#" \
     -e "s#^key_src=.*#key_src=$ep/key/keys.txt#" \
+    -e "s#^authorized_keys=.*#authorized_keys=$ep/authorized_keys#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -235,6 +257,15 @@ check "new image, no key, offline" "$out" \
     && pass "stale profile link replaced" || fail "stale profile link replaced" "$(readlink "$ep/home/.nix-profile")"
 [[ ! -e $ep/home/.config/age/keys.txt && ! -L $ep/home/.config/age/keys.txt ]] \
     && pass "stale key link removed" || fail "stale key link removed" "still there"
+
+[[ $(cat "$ep/authorized_keys") == $'ssh-ed25519 AAAAkey1 first\nssh-ed25519 AAAAkey2 second' && $(stat -c %a "$ep/authorized_keys") == 600 ]] \
+    && pass "agent keys authorized for sshd" || fail "agent keys authorized for sshd" "$(cat "$ep/authorized_keys" 2>&1)"
+rm "$ep/authorized_keys"
+out=$(AGENT_EMPTY=1 entry)
+check "empty agent warns, start continues" "$out" "warning: no keys in the SSH agent" "DONE"
+[[ ! -e $ep/authorized_keys ]] && pass "no authorized_keys without agent keys" || fail "no authorized_keys without agent keys" "exists"
+out=$(SSH_AUTH_SOCK='' entry)
+check "no agent socket warns, start continues" "$out" "warning: no keys in the SSH agent" "DONE"
 
 out=$(THOM_CONTAINER_SKIP_APPLY=1 entry)
 check "THOM_CONTAINER_SKIP_APPLY" "$out" "DONE" "!pull" "!nix run"

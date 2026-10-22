@@ -90,6 +90,17 @@ step "Starting the container system service"
 # Explicit kernel flag: with `curl | zsh`, a prompt would eat the script.
 container system status >/dev/null 2>&1 || container system start --enable-kernel-install
 
+# Containers are reachable as <name>.devbox (SSH, VS Code). This needs a
+# resolver for the domain, which takes sudo, and the service's default domain,
+# whose change restarts the service and so stops running containers: leave
+# both to the user.
+if ! container system dns list --quiet 2>/dev/null | grep -qx 'devbox'; then
+    warn "DNS domain 'devbox' is not registered, so <container>.devbox will not resolve. To enable it:"
+    echo "    sudo container system dns create devbox" >&2
+    echo "    # in ~/.config/container/config.toml:  [dns]  domain = \"devbox\"" >&2
+    echo "    container system stop && container system start   # stops running containers" >&2
+fi
+
 if [ -n "$pull" ]; then
     step "Pulling $image"
     if ! container image pull "$image"; then

@@ -16,6 +16,7 @@ devbox                      # current folder at /project, "private" profile
 devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
 devbox --attach             # new shell in the running container; fail if none
+devbox --code               # open VS Code on /project in the running container (Remote-SSH)
 devbox --reset              # wipe the profile's persisted home (asks first)
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
@@ -57,9 +58,54 @@ name on the first line) in it or any parent. Precedence: `-p`,
 - **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so
   the launcher adds `CAP_SYS_ADMIN` and the entrypoint sets it, then drops
   the capability before starting the shell.
+- **SSH / VS Code**: the image runs `sshd` (key-only, user `thom`), and the
+  entrypoint authorizes the public keys of the forwarded SSH agent
+  (`ssh-add -L`). `devbox` prints `ssh: thom@<name>.devbox` when it starts a
+  container; connect with `ssh` or VS Code's Remote-SSH, which installs its
+  server in the persisted home. The container is `--rm` and ends with its
+  main process, but when the shell or command exits the entrypoint waits
+  while ssh sessions (VS Code) are open; Ctrl-C stops it anyway.
+  See [SSH access](#ssh-access) for the one-time setup on the Mac.
 - **Docker**: `--docker` adds `--cap-add ALL` and starts `dockerd`. Each Apple
   container is its own VM, so this doesn't loosen isolation from the Mac.
   Images live on the container's root filesystem and are lost on exit.
+
+## SSH access
+
+Containers are reachable from the Mac as `<container name>.devbox` through
+`container`'s DNS service. One-time setup (the domain name is
+`host.dns_domain` in `config.toml`):
+
+```sh
+sudo container system dns create devbox
+# ~/.config/container/config.toml:
+#   [dns]
+#   domain = "devbox"
+container system stop && container system start   # stops running containers
+```
+
+`install.sh` warns if the domain is not registered
+(`container system dns list -q`). Then add this to `~/.ssh/config`; the
+snippet is printed for every registered domain:
+
+```sh
+for d in $(container system dns list -q); do
+    printf 'Host *.%s\n    User thom\n    StrictHostKeyChecking accept-new\n' "$d"
+done
+```
+
+```
+Host *.devbox
+    User thom
+    StrictHostKeyChecking accept-new
+```
+
+The host key is generated once per profile and kept in the persisted home
+(`~/.local/state/sshd`), so it stays valid across containers. Find the name
+with `container ls` or the `ssh:` line `devbox` prints; in VS Code use
+"Remote-SSH: Connect to Host…" with `dev-private-<folder>-<hash>.devbox`, or
+run `devbox --code` from the folder (needs the `code` command in `PATH`;
+override with `$THOM_CONTAINER_CODE`).
 
 ## Layout
 
