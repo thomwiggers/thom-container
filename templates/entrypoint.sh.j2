@@ -82,9 +82,39 @@ mount_nix() {
         || log "warning: could not bind $nix_vol over /nix; using the image's /nix"
 }
 
+# Claude Code keeps per-project state under the working directory's name,
+# which is always {{ container.project }}; bind the folder's own directory
+# (named by the launcher) over that one. Here rather than as a runtime mount
+# nested in the home, which can end up underneath the home mount.
+mount_claude_project() {
+    local name=${THOM_CONTAINER_CLAUDE_PROJECT:-}
+    local dir=$home_dir/{{ claude.projects_dir }}
+    local target=$dir/{{ container.project | claude_slug }}
+    unset THOM_CONTAINER_CLAUDE_PROJECT
+    [ -n "$name" ] || return 0
+    case $name in
+        *[!A-Za-z0-9-]* | {{ container.project | claude_slug }})
+            log "warning: bad Claude project name '$name'; projects share Claude's state"
+            return 0 ;;
+    esac
+    # As the user, so it works on a mount that refuses chown.
+    setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+        mkdir -p "$dir/$name" "$target" || true
+    # Sessions written while the old nested mount was hidden; this mount
+    # hides them in turn.
+    if [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
+        log "warning: ~/{{ claude.projects_dir }}/{{ container.project | claude_slug }} holds sessions from"
+        log "  before the per-project mount; on the host, move them into that"
+        log "  project's directory next to it"
+    fi
+    mount --bind "$dir/$name" "$target" \
+        || log "warning: could not bind $dir/$name; projects share Claude's state"
+}
+
 root_stage() {
     chown "$user_uid:$user_gid" "$home_dir" 2>/dev/null || true
     mount_nix
+    mount_claude_project
 
     # Keep gpg-agent & co. from putting sockets in the virtiofs home.
     install -d -m 0700 -o "$user_uid" -g "$user_gid" "/run/user/$user_uid"

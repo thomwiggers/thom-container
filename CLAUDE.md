@@ -32,9 +32,11 @@ was not tested.
 - The image's `/nix` holds the store; home only has links into it. On an
   image change the entrypoint swaps `container.nix_state` for the image's
   copies, or `nix` itself would be a dangling `~/.nix-profile/bin` link.
-- Every project is mounted at `/project`, so the launcher mounts
-  `~/.claude/projects/<host path slug>` over `~/.claude/projects/-project`
-  to keep Claude's per-project state apart.
+- Every project is mounted at `/project`, so the entrypoint bind-mounts
+  `~/.claude/projects/<host path slug>` (named by the launcher) over
+  `~/.claude/projects/-project` to keep Claude's per-project state apart.
+  Not a `--volume` nested in the home: Apple's runtime doesn't reliably
+  mount it after the home, and then it is hidden.
 - zsh replaces symlinked target files rather than writing through them;
   persist directories, not single files.
 - `astral-sh/setup-uv` has no floating major tags (`@v10` fails); pin the

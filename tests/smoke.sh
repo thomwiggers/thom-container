@@ -89,7 +89,7 @@ check "run with defaults" "$out" \
     "--cpus 10 --memory 8G" \
     "--volume $state/private:/home/thom" \
     "--volume dev-private-nix:/run/nix-state" "container volume create dev-private-nix" \
-    "--volume $state/private/.claude/projects/$claude_dir:/home/thom/.claude/projects/-project" \
+    "-e THOM_CONTAINER_CLAUDE_PROJECT=$claude_dir " "!/.claude/projects/" \
     "--volume $proj:/project --workdir /project" \
     "--tmpfs /home/thom/.ssh/sockets" \
     "--tmpfs /home/thom/.config/gh" \
