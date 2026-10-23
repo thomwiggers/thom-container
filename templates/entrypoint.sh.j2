@@ -97,9 +97,13 @@ mount_claude_project() {
             log "warning: bad Claude project name '$name'; projects share Claude's state"
             return 0 ;;
     esac
-    # As the user, so it works on a mount that refuses chown.
+    # As the user, so it works on a mount that refuses chown. The file keeps
+    # the directory from looking empty: something (Claude's cleanup?) removed
+    # an empty one, and a running container then wrote into the deleted
+    # directory.
+    # shellcheck disable=SC2016  # $1 and $2 are for the inner sh
     setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
-        mkdir -p "$dir/$name" "$target" || true
+        sh -c 'mkdir -p "$1" "$2" && : >>"$1/.devbox-keep"' _ "$dir/$name" "$target" || true
     # Sessions written while the old nested mount was hidden; this mount
     # hides them in turn.
     if [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
