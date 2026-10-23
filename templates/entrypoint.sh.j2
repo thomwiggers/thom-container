@@ -279,6 +279,12 @@ user_stage() {
         # files. If the pull fails (e.g. offline), still switch to what we
         # have, without fetching. Failures should not keep the shell from
         # starting.
+        # This host's machines/ entry (see below) is intent-to-add, which
+        # makes `git pull` with pull.rebase refuse ("unstaged changes"), and
+        # autostash fails on it too; drop it from the index for the pull.
+        local machine
+        machine=machines/$(hostname -s)
+        git -C "$dotfiles_dir" reset -q -- "$machine" </dev/null || true
         local -a switch_args=()
         if ! git -C "$dotfiles_dir" pull --ff-only </dev/null; then
             log "warning: dotfiles pull failed; switching without pulling"
@@ -288,8 +294,6 @@ user_stage() {
         # a plain `home-manager switch` finds thom@<hostname>. `add -N` makes
         # the flake see the file without staging its contents; it is never
         # committed.
-        local machine
-        machine=machines/$(hostname -s)
         mkdir -p "$dotfiles_dir/machines"
         if [ ! -e "$dotfiles_dir/$machine" ]; then
             echo "{{ dotfiles.config.split('@')[-1] }}" > "$dotfiles_dir/$machine"

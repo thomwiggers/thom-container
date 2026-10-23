@@ -288,7 +288,8 @@ entry() {
 stub nix 'echo "nix $*"'
 out=$(entry)
 check "first start pulls and switches with key" "$out" \
-    "seeding $ep/home" "git -C $ep/home/.config/home-manager pull --ff-only" \
+    "seeding $ep/home" "git -C $ep/home/.config/home-manager reset -q -- machines/" \
+    "git -C $ep/home/.config/home-manager pull --ff-only" \
     "nix run $ep/home/.config/home-manager#home-manager -- switch --flake $ep/home/.config/home-manager#thom@linux-arm -b hm-bak" \
     "DONE" "!--offline" "!refreshing Nix profiles"
 [[ $(cat "$ep/home/file") == seeded && $(cat "$ep/home/.hidden") == hidden && $(readlink "$ep/home/.config/age/keys.txt") == "$ep/key/keys.txt" ]] \
