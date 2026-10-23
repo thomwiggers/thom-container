@@ -277,10 +277,12 @@ if [[ -d $home_state.nix ]]; then
 fi
 
 # Claude Code keys per-project state (sessions, memory) on the working
-# directory, which is always {{ container.project }}. Mount the directory
-# Claude would have used for the host path over it to keep projects apart.
-claude_projects="$home_state/{{ claude.projects_dir }}/${dir//[^A-Za-z0-9]/-}"
-mkdir -p "$claude_projects"
+# directory, which is always {{ container.project }}. The entrypoint binds
+# the directory Claude would have used for the host path over it to keep
+# projects apart. Not a --volume: the runtime doesn't always mount one
+# nested in the home after the home itself, hiding it half the time.
+claude_project=${dir//[^A-Za-z0-9]/-}
+mkdir -p "$home_state/{{ claude.projects_dir }}/$claude_project"
 
 tty_args=(-i)
 [[ -t 0 && -t 1 ]] && tty_args=(-i -t)
@@ -320,7 +322,6 @@ run_args=(
     --memory "$memory"
     --volume "$home_state:{{ container.home }}"
     --volume "$nix_volume:{{ container.nix_state_mount }}"
-    --volume "$claude_projects:{{ container.home }}/{{ claude.projects_dir }}/{{ container.project | claude_slug }}"
     --volume "$dir:{{ container.project }}"
     --workdir {{ container.project }}
 {% for d in container.ephemeral %}
@@ -336,6 +337,7 @@ else
     run_args+=(--cap-add CAP_SYS_ADMIN)
 fi
 run_args+=(-e "THOM_CONTAINER_HOSTNAME=devbox${slug:+-$slug}")
+run_args+=(-e "THOM_CONTAINER_CLAUDE_PROJECT=$claude_project")
 
 # Ship the host's terminfo entry so the container knows terminals Debian
 # doesn't (e.g. xterm-ghostty, which Ghostty.app provides via $TERMINFO).

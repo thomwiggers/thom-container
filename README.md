@@ -76,7 +76,7 @@ name on the first line) in it or any parent. Precedence: `-p`,
   `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=9`, so no environment variable
   holds the token itself.
 - **Claude Code** per-project state: every folder is mounted at `/project`, so
-  the launcher mounts `~/.claude/projects/<host path>` over
+  the entrypoint bind-mounts `~/.claude/projects/<host path>` over
   `~/.claude/projects/-project` to keep projects apart.
 - **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs per container.
 - **On every start** the entrypoint pulls the dotfiles and runs
