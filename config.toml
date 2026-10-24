@@ -22,7 +22,7 @@ shell = "/usr/bin/zsh"
 
 [dotfiles]
 # Nix flake with standalone Home Manager.
-repo = "https://github.com/thomwiggers/chezmoi-dotfiles.git"
+repo = "https://github.com/thomwiggers/home-manager-config.git"
 # Checkout of the flake, relative to home (where `home-manager` looks).
 dir = ".config/home-manager"
 # homeConfigurations entry: <user>@<role>, here aarch64 Linux in a container.
