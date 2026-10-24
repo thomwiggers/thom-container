@@ -1,7 +1,7 @@
 # thom-container
 
 Debian 13 development container for [Apple's `container`](https://github.com/apple/container),
-with [my dotfiles](https://github.com/thomwiggers/chezmoi-dotfiles) (Nix and
+with [my dotfiles](https://github.com/thomwiggers/home-manager-config) (Nix and
 Home Manager), Claude Code and the GitHub CLI.
 
 ## Usage

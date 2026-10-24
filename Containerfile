@@ -112,7 +112,7 @@ RUN install -d ~/.config/nix \
 # dotfiles.cache_paths), so this slow layer is only rebuilt when they change.
 ARG DOTFILES_HASH=unknown
 RUN echo "dotfiles hash: ${DOTFILES_HASH}" \
- && git clone https://github.com/thomwiggers/chezmoi-dotfiles.git "$HOME/.config/home-manager" \
+ && git clone https://github.com/thomwiggers/home-manager-config.git "$HOME/.config/home-manager" \
  && nix run "$HOME/.config/home-manager#home-manager" -- switch \
       --flake "$HOME/.config/home-manager#thom@linux-arm" -b hm-bak
 
