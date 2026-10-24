@@ -66,10 +66,13 @@ Options:
                       signed in to the profile's account) in the Keychain and
                       exit; containers of the profile log in with it
       --image IMAGE   Image to run (default: $image) [env: THOM_CONTAINER_IMAGE]
+  -c, --cpus N        CPUs for a new container; 0 = all host CPUs
+                      (default: 0) [env: THOM_CONTAINER_CPUS]
+  -m, --memory SIZE   Memory for a new container, e.g. 16G or 4096M
+                      (default: 8G) [env: THOM_CONTAINER_MEMORY]
   -h, --help          Show this help
 
-Environment: THOM_CONTAINER_CPUS (0 = all, default: 0),
-THOM_CONTAINER_MEMORY (default: 8G).
+A running container keeps its size; exit it to start one with another.
 EOF
 }
 
@@ -109,6 +112,7 @@ attach=
 register_claude=
 open_code=
 reset=
+size_set=
 dir=
 while (( $# )); do
     case $1 in
@@ -154,6 +158,18 @@ while (( $# )); do
             image=$2
             shift 2
             ;;
+        -c | --cpus)
+            (( $# >= 2 )) || die "$1 needs an argument"
+            cpus=$2
+            size_set=1
+            shift 2
+            ;;
+        -m | --memory)
+            (( $# >= 2 )) || die "$1 needs an argument"
+            memory=$2
+            size_set=1
+            shift 2
+            ;;
         -h | --help)
             usage
             exit 0
@@ -171,6 +187,9 @@ while (( $# )); do
     esac
 done
 
+[[ $cpus == <-> ]] || die "CPUs must be a whole number (0 = all): '$cpus'"
+# A bare number would be bytes.
+[[ $memory == <->[KMGTkmgt] ]] || die "memory needs a unit, e.g. 16G or 4096M: '$memory'"
 [[ -d ${dir:-.} ]] || die "cannot access folder: $dir"
 dir=${${dir:-.}:A}
 
@@ -291,6 +310,8 @@ env_args=(-e "TERM=${TERM:-xterm-256color}" -e "THOM_CONTAINER_PROFILE=$profile"
 [[ -n ${COLORTERM:-} ]] && env_args+=(-e "COLORTERM=$COLORTERM")
 
 if container inspect "$name" >/dev/null 2>&1; then
+    [[ -z $size_set ]] \
+        || print -r -- "warning: $name is already running; --cpus and --memory only apply to a new container" >&2
     (( $# )) || set -- /usr/bin/zsh -l
     if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
         env_args+=(-e SSH_AUTH_SOCK=/var/host-services/ssh-auth.sock)

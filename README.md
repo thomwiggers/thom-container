@@ -21,6 +21,7 @@ devbox --reset              # wipe the profile's persisted home and Nix store (a
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
 devbox --docker             # also start dockerd inside (grants all capabilities)
+devbox -c 4 -m 16G          # 4 CPUs, 16 GiB (default: all CPUs, 8G); new containers only
 devbox -p work --register-claude-token  # store a `claude setup-token` token for the profile
 ```
 
