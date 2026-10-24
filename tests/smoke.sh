@@ -123,6 +123,17 @@ out=$(devbox --attach) && fail "--attach without a container fails" "exit 0" \
 out=$(RUNNING=1 devbox --attach -- ls)
 check "--attach with a running container" "$out" "container exec" "dev-private-my-proj-" " ls" "!container run"
 
+out=$(devbox -c 4 --memory 16G)
+check "--cpus and --memory" "$out" "--cpus 4 --memory 16G"
+out=$(THOM_CONTAINER_CPUS=0 THOM_CONTAINER_MEMORY=4096M devbox --cpus 2)
+check "size flags override the environment" "$out" "--cpus 2 --memory 4096M"
+out=$(RUNNING=1 devbox -m 16G)
+check "size flags warn when attaching" "$out" "already running" "container exec" "!container run"
+out=$(devbox -m 16) && fail "rejects memory without unit" "exit 0" \
+    || check "rejects memory without unit" "$out" "memory needs a unit" "!container run"
+out=$(devbox -c two) && fail "rejects non-numeric CPUs" "exit 0" \
+    || check "rejects non-numeric CPUs" "$out" "CPUs must be a whole number" "!container run"
+
 stub code 'echo "code $*"'
 out=$(RUNNING=1 devbox --code)
 check "--code opens VS Code over Remote-SSH" "$out" \
