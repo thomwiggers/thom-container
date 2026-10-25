@@ -360,6 +360,18 @@ fi
 run_args+=(-e "THOM_CONTAINER_HOSTNAME=devbox${slug:+-$slug}")
 run_args+=(-e "THOM_CONTAINER_CLAUDE_PROJECT=$claude_project")
 
+# The host's time zone, which the entrypoint links to /etc/localtime (not
+# TZ, so sshd sessions and `container exec` get it too). $TZ if it names a
+# zone, else /etc/localtime's target (/var/db/timezone/zoneinfo/<zone>).
+tz=${TZ#:}
+[[ $tz == */* ]] || tz=$(readlink /etc/localtime 2>/dev/null) || tz=
+tz=${tz##*zoneinfo/}
+if [[ -n $tz && $tz != /* ]]; then
+    run_args+=(-e "THOM_CONTAINER_TZ=$tz")
+else
+    print -r -- "warning: could not determine the host time zone; the container uses UTC" >&2
+fi
+
 # Ship the host's terminfo entry so the container knows terminals Debian
 # doesn't (e.g. xterm-ghostty, which Ghostty.app provides via $TERMINFO).
 # The entrypoint compiles it into ~/.terminfo, which persists, so attaching
