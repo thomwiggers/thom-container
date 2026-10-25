@@ -23,6 +23,7 @@ RUN apt-get update \
       procps \
       rsync \
       sudo \
+      tzdata \
       unzip \
       util-linux \
       wget \

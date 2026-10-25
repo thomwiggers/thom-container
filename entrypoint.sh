@@ -143,6 +143,19 @@ root_stage() {
     fi
     unset THOM_CONTAINER_HOSTNAME
 
+    # The host's zone name from the launcher; checked so it can't point
+    # /etc/localtime outside the zoneinfo directory.
+    local tz=${THOM_CONTAINER_TZ:-} zoneinfo=/usr/share/zoneinfo
+    if [ -n "$tz" ]; then
+        if [[ $tz =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] && [ -f "$zoneinfo/$tz" ]; then
+            ln -sfn "$zoneinfo/$tz" /etc/localtime
+            echo "$tz" > /etc/timezone
+        else
+            log "warning: unknown time zone $tz; using UTC"
+        fi
+    fi
+    unset THOM_CONTAINER_TZ
+
     # The launcher only adds CAP_SYS_ADMIN for the hostname; --docker needs
     # everything it grants.
     local -a cap_args=()

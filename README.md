@@ -87,6 +87,10 @@ name on the first line) in it or any parent. Precedence: `-p`,
 - **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so
   the launcher adds `CAP_SYS_ADMIN` and the entrypoint sets it, then drops
   the capability before starting the shell.
+- **Time zone** follows the Mac: the launcher passes `$TZ` or the zone
+  `/etc/localtime` points to, and the entrypoint links the container's
+  `/etc/localtime` to it (UTC if unknown). It is set when the container
+  starts, so a running one keeps its zone.
 - **SSH / VS Code**: the image runs `sshd` (key-only, user `thom`), and the
   entrypoint authorizes the public keys of the forwarded SSH agent
   (`ssh-add -L`). `devbox` prints `ssh: thom@<name>.devbox` when it starts a

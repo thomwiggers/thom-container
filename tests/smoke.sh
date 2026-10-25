@@ -71,7 +71,7 @@ echo "ssh-ed25519 AAAAkey1 first"; echo "ssh-ed25519 AAAAkey2 second"'
 stub curl 'while [ $# -gt 1 ]; do [ "$1" = -o ] && { cp "$FAKE_DOWNLOAD" "$2"; exit 0; }; shift; done; exit 22'
 command -v shasum >/dev/null || stub shasum 'sha256sum'
 
-export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm
+export PATH="$work/bin:$PATH" HOME="$work/home" SSH_AUTH_SOCK=/agent.sock TERM=xterm TZ=Europe/Amsterdam
 unset COLORTERM THOM_CONTAINER_PROFILE THOM_CONTAINER_IMAGE THOM_CONTAINER_DOCKER \
     THOM_CONTAINER_NO_GH THOM_CONTAINER_GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR
 export TMPDIR="$work/tmp/"
@@ -100,6 +100,7 @@ check "run with defaults" "$out" \
     "--volume $work/home/.ssh/known_hosts:/run/host-ssh/known_hosts:ro" \
     "--cap-add CAP_SYS_ADMIN" \
     "-e THOM_CONTAINER_HOSTNAME=devbox-my-proj " \
+    "-e THOM_CONTAINER_TZ=Europe/Amsterdam " \
     "ghcr.io/thomwiggers/thom-container:latest" \
     "!--cap-add ALL" \
     "ssh: thom@dev-private-my-proj-" ".devbox"
@@ -112,6 +113,18 @@ check "profile, DIR, --docker and command" "$out" \
     "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume $state/work:/home/thom" "--volume $work:/project" \
     "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "!CAP_SYS_ADMIN" \
     "-e THOM_CONTAINER_HOSTNAME=devbox-" "latest ls -la"
+
+out=$(TZ=:America/New_York devbox)
+check "passes TZ without the colon" "$out" "-e THOM_CONTAINER_TZ=America/New_York "
+
+if [[ $(readlink /etc/localtime 2>/dev/null) == */zoneinfo/?* ]]; then
+    out=$(TZ='' devbox)
+    check "falls back to /etc/localtime" "$out" \
+        "-e THOM_CONTAINER_TZ=$(readlink /etc/localtime | sed 's|.*zoneinfo/||') "
+fi
+
+out=$(TZ=UTC0 devbox)
+check "TZ without a zone name falls back to /etc/localtime" "$out" "!THOM_CONTAINER_TZ=UTC0"
 
 out=$(RUNNING=1 devbox)
 check "attaches to running container" "$out" \
