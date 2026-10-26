@@ -67,6 +67,9 @@ sshd_keys = ".local/state/sshd"
 [claude]
 # Claude Code's per-project state, relative to home.
 projects_dir = ".claude/projects"
+# Claude Code's state under home (history, sessions, memory, settings) that
+# `devbox --reset` keeps; `--reset-all` deletes it too.
+state = [".claude", ".claude.json"]
 # Where the entrypoint keeps the token from `devbox --register-claude-token`,
 # under /run/user/<uid> (not persisted). It is never in the environment:
 # the entrypoint (and the dotfiles' zshenv) open it on token_fd and export

@@ -17,7 +17,8 @@ devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
 devbox --attach             # new shell in the running container; fail if none
 devbox --code               # open VS Code on /project in the running container (Remote-SSH)
-devbox --reset              # wipe the profile's persisted home and Nix store (asks first)
+devbox --reset              # wipe the profile's persisted home (except ~/.claude, ~/.claude.json) and Nix store (asks first)
+devbox --reset-all          # same, including Claude Code's history and settings
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
 devbox --docker             # also start dockerd inside (grants all capabilities)
