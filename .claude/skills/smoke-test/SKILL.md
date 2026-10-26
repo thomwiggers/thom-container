@@ -5,7 +5,7 @@ description: Run and extend the stub-based smoke tests for bin/devbox, install.s
 
 # Smoke tests
 
-`tests/smoke.sh` exercises the generated scripts on Linux. It puts stubs for
+`tests/smoke.sh` (zsh) exercises the generated scripts on Linux and macOS. It puts stubs for
 `container`, `sysctl`, `uname`, `git`, `curl` and `nix` in front of
 `PATH`; each prints its arguments, so a test asserts on the exact command
 lines the scripts would run.
@@ -16,7 +16,8 @@ lines the scripts would run.
 uv run render.py && tests/smoke.sh
 ```
 
-CI runs the same thing in the `lint` job, and the PostToolUse hook runs it
+CI runs the same thing in the `lint` job and, against macOS's own zsh and
+BSD tools, in `smoke-macos` (which skips the entrypoint part), and the PostToolUse hook runs it
 after every edit to `templates/`, `config.toml`, `render.py` or `tests/`.
 
 ## What it can and cannot tell you
@@ -33,7 +34,7 @@ after every edit to `templates/`, `config.toml`, `render.py` or `tests/`.
 
 Follow the existing pattern in `tests/smoke.sh`:
 
-```bash
+```zsh
 out=$(devbox --some-flag)
 check "description" "$out" \
     "substring that must appear" \
@@ -46,4 +47,6 @@ check "description" "$out" \
   failing `git pull` case) or pass an env var the stub reads
   (`RUNNING`, `FAKE_DOWNLOAD`).
 - For expected failures use `out=$(...) && fail ... || check ...`.
-- Keep stubs POSIX sh; keep the harness passing `shellcheck`.
+- Keep stubs POSIX sh. The harness is zsh and must pass `zsh -n`; avoid
+  GNU-only flags (`stat -c`, `touch -d`, `sed -i`): use `perms` and
+  `zsh/datetime`, since it also runs on macOS.

@@ -15,17 +15,19 @@ for new settings.
 
 ## Shells
 
-- `bin/devbox`, `install.sh`: zsh (`#!/bin/zsh -f`), run on macOS. Lint
-  with `zsh -n`. `$0` inside a function is the function name, and a
-  function's EXIT trap runs after its locals are gone.
-- `entrypoint.sh`, `tests/smoke.sh`: bash, linted with shellcheck.
+- `bin/devbox`, `install.sh`, `tests/smoke.sh`: zsh (`#!/bin/zsh -f`).
+  The first two run on macOS. Lint with `zsh -n`. `$0` inside a function
+  is the function name, and a function's EXIT trap runs after its locals
+  are gone.
+- `entrypoint.sh`: bash, linted with shellcheck.
 
 ## Testing
 
 `tests/smoke.sh` stubs `container`, `nix`, etc. (see the `smoke-test`
-skill). Nothing here can run Apple's runtime or the entrypoint's root
-stage; the image only builds in CI (`ubuntu-24.04-arm`, ~5 min). Say what
-was not tested.
+skill). CI runs it on Linux and on `macos-26` (real zsh and BSD tools;
+the entrypoint part is skipped there). Nothing here can run Apple's
+runtime or the entrypoint's root stage; the image only builds in CI
+(`ubuntu-24.04-arm`, ~5 min). Say what was not tested.
 
 ## Gotchas
 

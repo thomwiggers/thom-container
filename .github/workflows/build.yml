@@ -29,9 +29,25 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
       - name: Lint scripts
         run: |
-          shellcheck entrypoint.sh tests/smoke.sh
+          shellcheck entrypoint.sh
           zsh -n bin/devbox
           zsh -n install.sh
+          zsh -n tests/smoke.sh
+      - name: Smoke tests
+        run: tests/smoke.sh
+
+  smoke-macos:
+    # The launcher and installer under the real /bin/zsh and BSD userland.
+    # `container` stays stubbed: the runner is a VM without nested
+    # virtualization.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint scripts
+        run: |
+          zsh -n bin/devbox
+          zsh -n install.sh
+          zsh -n tests/smoke.sh
       - name: Smoke tests
         run: tests/smoke.sh
 

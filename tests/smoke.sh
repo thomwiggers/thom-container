@@ -1,15 +1,19 @@
-#!/bin/bash
-# shellcheck disable=SC2015,SC2016  # stub bodies are literal; pass/fail never fail
-# Smoke tests for the generated scripts, runnable on Linux without Apple's
-# container: `container`, `sysctl`, `git`, `curl` and `nix` are replaced
-# by stubs that log their arguments.
+#!/bin/zsh -f
+# Smoke tests for the generated scripts, runnable on Linux and macOS without
+# Apple's container: `container`, `sysctl`, `git`, `curl` and `nix` are
+# replaced by stubs that log their arguments. zsh, so that on macOS the
+# harness needs nothing beyond the system shell; the entrypoint tests need
+# Linux and are skipped there.
 #
 # Usage: tests/smoke.sh   (render first: uv run render.py)
 # No -e: a failing command under test should be reported, not abort the run.
-set -uo pipefail
+setopt nounset pipefail
+zmodload -F zsh/stat b:zstat
+zmodload zsh/datetime
 
-repo=$(cd "$(dirname "$0")/.." && pwd -P)
-work=$(mktemp -d)
+repo=${0:A:h:h}
+# Resolved: macOS's TMPDIR is under the /var -> /private/var link.
+work=${$(mktemp -d):A}
 trap 'rm -rf "$work"' EXIT
 
 failures=0
@@ -18,6 +22,20 @@ fail() {
     printf '  FAIL  %s\n' "$1"
     printf '%s\n' "$2" | sed 's/^/        | /'
     failures=$((failures + 1))
+}
+# Permission bits in octal, like GNU `stat -c %a`.
+perms() {
+    local -a mode
+    zstat -A mode +mode -- "$1" && printf '%o\n' $((mode[1] & 8#777))
+}
+summary() {
+    echo
+    if ((failures)); then
+        echo "$failures check(s) failed"
+        exit 1
+    fi
+    echo "all checks passed"
+    exit 0
 }
 # check NAME OUTPUT [!]SUBSTRING...  (a leading ! means "must not contain")
 check() {
@@ -235,12 +253,12 @@ out=$(CLAUDE_TOKEN=ctok devbox -p work)
 check "passes the profile's Claude token in a file" "$out" \
     "--volume $work/tmp/devbox-claude." ":/run/host-claude " "!ctok"
 claude_tmp=$(sed -n 's#.*--volume \([^ ]*\):/run/host-claude .*#\1#p' <<<"$out")
-[[ $(cat "$claude_tmp/token") == ctok-work && $(stat -c %a "$claude_tmp") == 700 && $(stat -c %a "$claude_tmp/token") == 600 ]] \
+[[ $(cat "$claude_tmp/token") == ctok-work && $(perms "$claude_tmp") == 700 && $(perms "$claude_tmp/token") == 600 ]] \
     && pass "Claude token file is private" || fail "Claude token file is private" "$(ls -la "$claude_tmp" 2>&1)"
 out=$(CLAUDE_TOKEN=ctok RUNNING=1 devbox)
 check "attach does not pass the Claude token" "$out" "container exec" "!/run/host-claude" "!ctok"
 # A token that was never picked up goes after 10 minutes; empty dirs go.
-touch -d '-11 minutes' "$claude_tmp/token"
+touch -t "$(strftime %Y%m%d%H%M.%S $((EPOCHSECONDS - 660)))" "$claude_tmp/token"
 mkdir "$work/tmp/devbox-claude.empty"
 out=$(devbox --no-gh)
 [[ ! -e $claude_tmp && ! -e $work/tmp/devbox-claude.empty ]] \
@@ -297,6 +315,11 @@ out=$(cd "$work" && FAKE_DOWNLOAD="$repo/bin/devbox" zsh -f -s -- --no-pull <"$r
 check "install piped from curl" "$out" "downloaded from" "!container image pull"
 [[ -f $work/home/.local/bin/devbox && ! -L $work/home/.local/bin/devbox ]] \
     && pass "devbox downloaded" || fail "devbox downloaded" "$(ls -l "$work/home/.local/bin")"
+
+if [[ $OSTYPE == darwin* ]]; then
+    echo "entrypoint.sh: skipped (it only runs in the Debian image)"
+    summary
+fi
 
 echo "entrypoint.sh (user stage)"
 ep="$work/ep"
@@ -366,7 +389,7 @@ out=$(entry)
 check "unreadable store recommends --reset" "$out" "looks broken" "devbox --reset" "DONE"
 stub nix 'echo "nix $*"'
 
-[[ $(cat "$ep/authorized_keys") == $'ssh-ed25519 AAAAkey1 first\nssh-ed25519 AAAAkey2 second' && $(stat -c %a "$ep/authorized_keys") == 600 ]] \
+[[ $(cat "$ep/authorized_keys") == $'ssh-ed25519 AAAAkey1 first\nssh-ed25519 AAAAkey2 second' && $(perms "$ep/authorized_keys") == 600 ]] \
     && pass "agent keys authorized for sshd" || fail "agent keys authorized for sshd" "$(cat "$ep/authorized_keys" 2>&1)"
 rm "$ep/authorized_keys"
 out=$(AGENT_EMPTY=1 entry)
@@ -384,7 +407,6 @@ check "failed switch does not stop the shell" "$out" "home-manager switch failed
 stub nix 'echo "nix $*"'
 stub git 'echo "git $*"'
 
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(THOM_CONTAINER_GH_TOKEN=secret entry sh -c 'echo "leak=${THOM_CONTAINER_GH_TOKEN:-none}"')
 check "logs in to GitHub, token not leaked to the shell" "$out" \
     "gh auth login --hostname github.com --with-token stdin=secret" "leak=none"
@@ -394,16 +416,13 @@ check "gh login failure does not block start" "$out" "warning: gh auth login fai
 
 mkdir -p "$ep/host-claude"
 (umask 077 && echo ctok >"$ep/host-claude/token")
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(entry sh -c 'echo "fd=${CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR:-none} read=$(cat <&9) env=$(env | grep -c ctok)"')
 check "Claude token on a descriptor, not in the environment" "$out" "fd=9 read=ctok env=0"
-[[ $(cat "$ep/claude-token") == ctok && $(stat -c %a "$ep/claude-token") == 600 && ! -e $ep/host-claude/token ]] \
+[[ $(cat "$ep/claude-token") == ctok && $(perms "$ep/claude-token") == 600 && ! -e $ep/host-claude/token ]] \
     && pass "Claude token moved off the host" || fail "Claude token moved off the host" "$(ls -l "$ep/claude-token" "$ep/host-claude" 2>&1)"
 rm "$ep/claude-token"
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(entry sh -c 'echo "fd=${CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR:-none}"')
 check "no Claude token, no descriptor" "$out" "fd=none"
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(entry sh -c 'echo "claude=${CLAUDE_CODE_OAUTH_TOKEN:-none}"')
 check "no Claude token, none exported" "$out" "claude=none"
 [[ ! -e $ep/claude-token ]] && pass "no Claude token file without a token" || fail "no Claude token file without a token" "exists"
@@ -413,21 +432,22 @@ rm "$ep/home/.thom-container-image"
 echo nope >"$ep/seed/unreadable"
 chmod 000 "$ep/seed/unreadable"
 out=$(entry)
-check "seeding error is not fatal" "$out" "seeding $ep/home" "warning: some files could not be copied" "DONE"
+if ((EUID)); then
+    check "seeding error is not fatal" "$out" "seeding $ep/home" "warning: some files could not be copied" "DONE"
+else
+    echo "  skip  seeding error is not fatal (root can read the file)"
+fi
 chmod 600 "$ep/seed/unreadable"
 
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(THOM_CONTAINER_PROFILE=work entry sh -c 'echo "profile=$THOM_CONTAINER_PROFILE"')
 check "profile reaches the shell" "$out" "profile=work"
 
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(entry sh -c 'echo "profile=$THOM_CONTAINER_PROFILE"')
 check "profile defaults to unknown" "$out" "profile=unknown"
 
 out=$(entry)
 check "no token, no login" "$out" "DONE" "!gh auth login" "!tic"
 
-# shellcheck disable=SC2016  # expanded by the inner sh
 out=$(THOM_CONTAINER_TERMINFO=$fake_terminfo entry sh -c 'echo "leak=${THOM_CONTAINER_TERMINFO:-none}"')
 check "installs host terminfo" "$out" "tic -x -o $ep/home/.terminfo - stdin=fake-entry" "leak=none"
 
@@ -435,9 +455,4 @@ stub tic 'exit 1'
 out=$(THOM_CONTAINER_TERMINFO=$fake_terminfo entry)
 check "terminfo failure does not block start" "$out" "warning: could not install terminfo" "DONE"
 
-echo
-if ((failures)); then
-    echo "$failures check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+summary

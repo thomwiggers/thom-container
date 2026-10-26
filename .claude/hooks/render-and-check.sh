@@ -17,9 +17,10 @@ check() {
         uvx ruff format --quiet render.py || return
     fi
     uv run --quiet render.py || return
-    uvx --from shellcheck-py shellcheck entrypoint.sh tests/smoke.sh || return
+    uvx --from shellcheck-py shellcheck entrypoint.sh || return
     zsh -n bin/devbox || return
     zsh -n install.sh || return
+    zsh -n tests/smoke.sh || return
     # Only the failures are interesting.
     tests/smoke.sh | grep -v '^  ok '
 }
