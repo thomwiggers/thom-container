@@ -55,9 +55,11 @@ Options:
       --code          Open VS Code on {{ container.project }} in the running container
                       over Remote-SSH (<name>.{{ host.dns_domain }}); fail if there is none
                       [env: THOM_CONTAINER_CODE=<code command>]
-      --reset         Delete the profile's persisted home and Nix store after
+      --reset         Delete the profile's persisted home (except Claude Code's
+                      state: {% for p in claude.state %}~/{{ p }}{{ ", " if not loop.last }}{% endfor %}) and Nix store after
                       asking, so they are re-seeded from the image; refuses if any container
                       of the profile is running
+      --reset-all     Like --reset, but delete Claude Code's state too
       --pull          Pull the image before starting
       --self-update   Update this script (git pull if it lives in a clone,
                       otherwise download the latest release) and exit
@@ -135,6 +137,10 @@ while (( $# )); do
             ;;
         --reset)
             reset=1
+            shift
+            ;;
+        --reset-all)
+            reset=all
             shift
             ;;
         --pull)
@@ -271,11 +277,21 @@ if [[ -n $reset ]]; then
     (( $#running )) \
         && die "containers using profile '$profile' are running (${(j:, :)running}); exit them before --reset"
     if [[ -d $home_state ]] || container volume inspect "$nix_volume" >/dev/null 2>&1; then
-        print -rn -- "Delete $home_state and volume $nix_volume (all of profile '$profile')? [y/N] "
+        keep=({% for p in claude.state %}{{ " " if not loop.first }}"{{ p }}"{% endfor %})
+        [[ $reset == all ]] && keep=()
+        print -rn -- "Delete $home_state${keep:+ (keeping ${(j:, :)keep})} and volume $nix_volume (all of profile '$profile')? [y/N] "
         read -r reply || reply=
         [[ $reply == [yY]* ]] || die "aborted"
         # The Nix store goes too: the home's profile links point into it.
-        rm -rf -- "$home_state"
+        if (( $#keep )); then
+            # The entrypoint re-seeds around what is left: no marker, and
+            # seeding keeps existing files.
+            for entry in $home_state/*(DN); do
+                (( ${keep[(Ie)${entry:t}]} )) || rm -rf -- "$entry"
+            done
+        else
+            rm -rf -- "$home_state"
+        fi
         if container volume inspect "$nix_volume" >/dev/null 2>&1; then
             container volume delete "$nix_volume" >/dev/null \
                 || die "could not delete volume $nix_volume"
