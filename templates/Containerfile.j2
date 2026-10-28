@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1
 # {{ generated_header }}
-FROM {{ image.base }}
+# Two stages on a common base: `build` runs Nix, Home Manager and the Claude
+# Code installer; the final image takes only their output (/nix and the
+# home). Built in place, the home would ship twice, once in the layers that
+# filled it and again in the seed copy, and the image's own home is hidden by
+# the persistent mount anyway.
+FROM {{ image.base }} AS base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
@@ -117,11 +122,13 @@ RUN apt-get update \
       'UsePAM no' \
       > /etc/ssh/sshd_config.d/devbox.conf
 
-USER {{ user.name }}
-WORKDIR {{ container.home }}
 # The Nix installer wants $USER; ~/.nix-profile/bin is where nix lives.
 ENV USER={{ user.name }} \
     PATH={{ container.home }}/.nix-profile/bin:{{ container.home }}/.local/bin:$PATH
+
+FROM base AS build
+USER {{ user.name }}
+WORKDIR {{ container.home }}
 
 # Nix has no build sandbox here: unprivileged user namespaces are not
 # available while building the image or in the container.
@@ -147,21 +154,34 @@ RUN echo "claude cache bust: ${CLAUDE_CACHE_BUST}" \
  && curl -fsSL https://claude.ai/install.sh | bash \
  && claude --version
 
-# Snapshot the home directory. The real home is a persistent host mount; the
-# entrypoint seeds it from this copy on first start.
-USER root
-# Nothing here may differ between builds of the same inputs (no commit or run
-# id): this layer holds the whole home, and a new digest for it, and for every
-# layer after it, means devices pulling it all again.
+# Markers for the entrypoint. Nothing here may differ between builds of the
+# same inputs (no commit or run id): the home becomes one layer of the final
+# image, and a new digest for it means devices pulling it all again.
+# .thom-container-image says the home is seeded.
 # .thom-container-nix identifies the /nix contents: the dotfiles hash changes
 # exactly when the Home Manager layer is rebuilt, so it stays put across
 # rebuilds that leave the store alone (a local build without DOTFILES_HASH
 # falls back to a hash of the store's contents).
-RUN cp -a {{ container.home }} {{ container.home_seed }} \
- && echo "${DOTFILES_HASH} ${CLAUDE_CACHE_BUST}" > {{ container.home_seed }}/.thom-container-image \
+RUN echo "${DOTFILES_HASH} ${CLAUDE_CACHE_BUST}" > .thom-container-image \
  && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=$(ls /nix/store | sha256sum | cut -d' ' -f1); else nix_id=${DOTFILES_HASH}; fi \
- && echo "${nix_id}" > {{ container.home_seed }}/.thom-container-nix \
- && chown {{ user.uid }}:{{ user.gid }} {{ container.home_seed }}/.thom-container-image {{ container.home_seed }}/.thom-container-nix
+ && echo "${nix_id}" > .thom-container-nix
+
+FROM base
+# The store, then the home as the seed: the real home is a persistent host
+# mount, which the entrypoint seeds from this copy on first start. COPY
+# --from doesn't keep the owner.
+COPY --from=build --chown={{ user.uid }}:{{ user.gid }} /nix /nix
+COPY --from=build --chown={{ user.uid }}:{{ user.gid }} {{ container.home }} {{ container.home_seed }}
+
+# The image's own home gets the Nix state (links only), so `nix` works when
+# the image is run without the entrypoint or the home mount.
+USER {{ user.name }}
+RUN cd {{ container.home_seed }} \
+ && for p in {% for d in container.nix_state %}"{{ d }}" {% endfor %}; do \
+      if [ -e "$p" ] || [ -L "$p" ]; then cp -a --parents "$p" {{ container.home }}/; fi; \
+    done \
+ && nix --version
+USER root
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 
