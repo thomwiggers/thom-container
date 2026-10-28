@@ -245,16 +245,21 @@ fi
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
 home_state="$state_root/$profile"
-# A container volume (ext4), not a host directory: macOS file systems are
-# usually case-insensitive, and the Nix store has paths differing only in
-# case (terminfo/a and terminfo/A).
-nix_volume="dev-$profile-nix"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
 slug=${${(L)dir:t}//[^a-z0-9-]/-}
 slug=${${slug[1,24]}%-}
 hash=$(print -rn -- "$dir" | shasum -a 256 | cut -c1-8)
 name="dev-$profile-$slug-$hash"
+
+# The folder's changes to the image's /nix (the entrypoint overlays them).
+# A container volume (ext4), not a host directory: macOS file systems are
+# usually case-insensitive, and the Nix store has paths differing only in
+# case (terminfo/a and terminfo/A). One per folder: the runtime attaches a
+# volume as a disk, which only one running container can hold.
+nix_volume="$name-nix"
+# Earlier versions shared one full copy of the store per profile.
+old_nix_volume="dev-$profile-nix"
 
 if [[ -n $open_code ]]; then
     [[ -z $attach && -z $reset ]] || die "--code cannot be combined with --attach or --reset"
@@ -272,10 +277,13 @@ if [[ -n $reset ]]; then
     running=(${(M)running:#dev-$profile-*})
     (( $#running )) \
         && die "containers using profile '$profile' are running (${(j:, :)running}); exit them before --reset"
-    if [[ -d $home_state ]] || container volume inspect "$nix_volume" >/dev/null 2>&1; then
+    # The Nix volumes of all of the profile's folders, and the old one.
+    volumes=(${(f)"$(container volume list --quiet 2>/dev/null)"})
+    volumes=(${(M)volumes:#dev-$profile-(*-|)nix})
+    if [[ -d $home_state ]] || (( $#volumes )); then
         keep=(".claude" ".claude.json")
         [[ $reset == all ]] && keep=()
-        print -rn -- "Delete $home_state${keep:+ (keeping ${(j:, :)keep})} and volume $nix_volume (all of profile '$profile')? [y/N] "
+        print -rn -- "Delete $home_state${keep:+ (keeping ${(j:, :)keep})}${volumes:+ and volumes ${(j:, :)volumes}} (all of profile '$profile')? [y/N] "
         read -r reply || reply=
         [[ $reply == [yY]* ]] || die "aborted"
         # The Nix store goes too: the home's profile links point into it.
@@ -288,10 +296,10 @@ if [[ -n $reset ]]; then
         else
             rm -rf -- "$home_state"
         fi
-        if container volume inspect "$nix_volume" >/dev/null 2>&1; then
-            container volume delete "$nix_volume" >/dev/null \
-                || die "could not delete volume $nix_volume"
-        fi
+        for volume in $volumes; do
+            container volume delete "$volume" >/dev/null \
+                || die "could not delete volume $volume"
+        done
         print -r -- "Reset $home_state"
     fi
 fi
@@ -299,8 +307,13 @@ mkdir -p "$home_state"
 container volume inspect "$nix_volume" >/dev/null 2>&1 \
     || container volume create "$nix_volume" >/dev/null \
     || die "could not create volume $nix_volume for the Nix store"
-# Earlier versions kept the store in a host directory, where seeding fails
-# on the case clashes; nothing uses it any more.
+if container volume inspect "$old_nix_volume" >/dev/null 2>&1; then
+    print -r -- "Removing the unused Nix volume $old_nix_volume" >&2
+    container volume delete "$old_nix_volume" >/dev/null 2>&1 \
+        || print -r -- "warning: could not delete $old_nix_volume; is a container from an older devbox using it?" >&2
+fi
+# Even earlier ones kept it in a host directory, where seeding fails on the
+# case clashes.
 if [[ -d $home_state.nix ]]; then
     print -r -- "Removing the unused Nix store $home_state.nix" >&2
     chmod -R u+w "$home_state.nix" 2>/dev/null

@@ -18,9 +18,11 @@ claude_token=/run/user/$user_uid/{{ claude.token_file }}
 claude_src={{ claude.host_token_dir }}/token
 marker=.thom-container-image
 # Identifies the image's /nix (see the Containerfile); Nix state in the home
-# and in the nix_vol volume is only valid for the same value.
+# and in the nix_vol overlay is only valid for the same value.
 nix_marker=.thom-container-nix
 nix_vol={{ container.nix_state_mount }}
+# This folder's copies of the home's Nix state, in its /nix overlay.
+nix_home=/nix/var/devbox-home
 
 log() { echo "entrypoint: $*" >&2; }
 
@@ -33,53 +35,56 @@ check_nix() {
     if [ ! -e "$profile" ] || ! nix store ping >/dev/null 2>&1; then
         log "warning: the Nix store or ~/.nix-profile looks broken; if rerunning"
         log "  'home-manager switch' doesn't fix it, exit and run 'devbox --reset' on"
-        log "  the host (wipes this profile's home and Nix store)"
+        log "  the host (wipes this profile's home and Nix stores)"
     fi
 }
 
-# Bind the profile's persistent Nix store over /nix, seeding it from the
-# image's /nix (still visible underneath until the mount) when it is empty or
-# was seeded from a different /nix. Then the store is replaced: the new
-# paths aren't in the old Nix DB, which lives in there too. An image rebuilt
-# with the same /nix keeps the store. On any failure the container just
-# keeps the image's /nix.
+# Overlay the folder's Nix volume on the image's /nix: the image's store
+# stays underneath, and the volume only holds what changes (the Nix DB, Home
+# Manager builds, `nix profile add`). Changes only make sense over the /nix
+# they were made on, so a different one starts the volume over; an image
+# rebuilt with the same /nix keeps it. The home's Nix state directories
+# point into this store, and the home is shared by the profile's folders, so
+# they live in the overlay too and are bound over the home's. On any failure
+# the container keeps the image's /nix.
 mount_nix() {
-    local nix_id vol_id
+    local nix_id vol_id p src
     mountpoint -q "$nix_vol" 2>/dev/null || return 0
-    chown "$user_uid:$user_gid" "$nix_vol" 2>/dev/null || true
 
     nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
     vol_id=$(cat "$nix_vol/$nix_marker" 2>/dev/null || echo none)
     if [ "$nix_id" != "$vol_id" ]; then
-        # The store has paths differing only in case; a case-insensitive
-        # mount (a macOS host directory) can't hold it.
-        rm -f "$nix_vol/.case-probe" "$nix_vol/.CASE-PROBE"
-        if touch "$nix_vol/.case-probe" && [ -e "$nix_vol/.CASE-PROBE" ]; then
-            rm -f "$nix_vol/.case-probe"
-            log "warning: $nix_vol is case-insensitive; using the image's /nix"
-            log "  (update devbox: it now keeps the store in a container volume)"
-            return 0
-        fi
-        rm -f "$nix_vol/.case-probe"
-        log "seeding $nix_vol with the image's /nix (this takes a while)"
-        # Store paths are read-only; make them deletable first.
-        chmod -R u+w "$nix_vol" 2>/dev/null || true
+        [ "$vol_id" = none ] || log "Nix store changed ($vol_id -> $nix_id); starting $nix_vol over"
         find "$nix_vol" -mindepth 1 -delete 2>/dev/null || true
-        # As the user, so the copy works on a mount that refuses chown.
-        # Entries rather than "/nix/.", so the mount point keeps its own
-        # times and mode.
-        # shellcheck disable=SC2016  # $1 is for the inner bash
-        if setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
-            bash -c 'shopt -s dotglob nullglob; cp -a /nix/* "$1"/' _ "$nix_vol"; then
-            echo "$nix_id" > "$nix_vol/$nix_marker"
-            chown "$user_uid:$user_gid" "$nix_vol/$nix_marker" 2>/dev/null || true
-        else
-            log "warning: could not seed $nix_vol; using the image's /nix"
+        if ! mkdir "$nix_vol/upper" "$nix_vol/work" \
+            || ! echo "$nix_id" > "$nix_vol/$nix_marker"; then
+            log "warning: could not set up $nix_vol; using the image's /nix"
             return 0
         fi
     fi
-    mount --bind "$nix_vol" /nix \
-        || log "warning: could not bind $nix_vol over /nix; using the image's /nix"
+    if ! mount -t overlay overlay \
+        -o "lowerdir=/nix,upperdir=$nix_vol/upper,workdir=$nix_vol/work" /nix; then
+        log "warning: could not mount $nix_vol over /nix; using the image's /nix"
+        return 0
+    fi
+
+    # Directories only: a bind follows a link (~/.nix-profile), which points
+    # into these anyway.
+    for p in {% for d in container.nix_state %}"{{ d }}" {% endfor %}; do
+        if [ ! -d "$home_seed/$p" ] || [ -L "$home_seed/$p" ]; then
+            continue
+        fi
+        src=$nix_home/$p
+        if [ ! -d "$src" ] && ! { mkdir -p "$(dirname "$src")" && cp -a "$home_seed/$p" "$src"; }; then
+            log "warning: could not seed $src; ~/$p is shared by the profile's folders"
+            continue
+        fi
+        # As the user, so it works on a mount that refuses chown.
+        setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+            mkdir -p "$home_dir/$p" || true
+        mount --bind "$src" "$home_dir/$p" \
+            || log "warning: could not bind $src; ~/$p is shared by the profile's folders"
+    done
 }
 
 # Claude Code keeps per-project state under the working directory's name,
@@ -256,10 +261,12 @@ user_stage() {
     if [ "$nix_id" != "$home_id" ]; then
         # Different /nix: the profile links in the persisted home point at
         # store paths that may no longer exist. Take the image's links; the
-        # switch below relinks the rest.
+        # switch below relinks the rest. Not the ones mount_nix bound from
+        # this folder's overlay, which match its store.
         log "Nix store changed ($home_id -> $nix_id); refreshing Nix profiles"
         local p
         for p in {% for d in container.nix_state %}"{{ d }}" {% endfor %}; do
+            mountpoint -q "$home_dir/$p" 2>/dev/null && continue
             rm -rf "${home_dir:?}/$p"
             if [ -e "$home_seed/$p" ] || [ -L "$home_seed/$p" ]; then
                 mkdir -p "$(dirname "$home_dir/$p")"

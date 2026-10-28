@@ -64,7 +64,7 @@ mkdir -p "$work/bin" "$work/home/.config/age" "$work/My Proj"
 : >"$work/home/.config/age/keys.txt"
 mkdir -p "$work/home/.ssh"
 echo "github.com ssh-ed25519 AAAA" >"$work/home/.ssh/known_hosts"
-stub container 'if [ "$1" = volume ]; then echo "container $*" >&2; else echo "container $*"; fi; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "volume inspect" ] && { [ -n "${VOLUME:-}" ] || exit 1; }; [ "$1 $2" = "system status" ] && exit 1; [ "$1 $2 $3" = "system dns list" ] && echo "${DNS_DOMAINS:-}"; exit 0'
+stub container 'if [ "$1" = volume ]; then echo "container $*" >&2; else echo "container $*"; fi; [ "$1" = list ] && echo "${LISTED:-}"; [ "$1" = inspect ] && { [ -n "${RUNNING:-}" ] || exit 1; }; [ "$1 $2" = "volume inspect" ] && { case " ${VOLUMES:-} " in *" $3 "*) ;; *) exit 1;; esac; }; [ "$1 $2" = "volume list" ] && printf "%s\n" ${VOLUMES:-}; [ "$1 $2" = "system status" ] && exit 1; [ "$1 $2 $3" = "system dns list" ] && echo "${DNS_DOMAINS:-}"; exit 0'
 stub sysctl 'echo 10'
 stub uname 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac'
 stub git 'echo "git $*"'
@@ -99,6 +99,7 @@ devbox() { (cd "$work/My Proj" && zsh -f "$repo/bin/devbox" "$@" 2>&1); }
 state="$work/home/.cache/thom-containers"
 proj="$work/My Proj"
 claude_dir=$(printf '%s' "$proj" | tr -c 'A-Za-z0-9' '-')
+hash=$(printf '%s' "$proj" | shasum -a 256 | cut -c1-8)
 
 echo "devbox"
 out=$(devbox)
@@ -106,7 +107,8 @@ check "run with defaults" "$out" \
     "container run -i -e TERM=xterm " "--rm --init --name dev-private-my-proj-" \
     "--cpus 10 --memory 8G" \
     "--volume $state/private:/home/thom" \
-    "--volume dev-private-nix:/run/nix-state" "container volume create dev-private-nix" \
+    "--volume dev-private-my-proj-$hash-nix:/run/nix-state" "container volume create dev-private-my-proj-$hash-nix" \
+    "!volume delete" \
     "-e THOM_CONTAINER_CLAUDE_PROJECT=$claude_dir " "!/.claude/projects/" \
     "--volume $proj:/project --workdir /project" \
     "--tmpfs /home/thom/.ssh/sockets" \
@@ -201,29 +203,36 @@ out=$(LISTED=$'dev-work-x-1\ndev-private-other-1' devbox --reset </dev/null) && 
 touch "$state/private/marker"
 mkdir -p "$state/private/.claude/projects"
 touch "$state/private/.claude.json" "$state/private/.claude/history.jsonl"
-out=$(VOLUME=1 devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
+vols="dev-private-my-proj-$hash-nix dev-private-other-1-nix dev-private-nix dev-work-x-1-nix"
+out=$(VOLUMES=$vols devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
     || check "--reset aborts on no" "$out" "aborted" "!volume delete"
 [[ -e $state/private/marker ]] \
     && pass "home kept on abort" || fail "home kept on abort" "marker gone"
-out=$(VOLUME=1 devbox --reset <<<y)
+out=$(VOLUMES=$vols devbox --reset <<<y)
 check "--reset wipes and restarts" "$out" "Reset $state/private" \
-    "container volume delete dev-private-nix" "!volume create" "container run"
+    "and volumes dev-private-my-proj-$hash-nix, dev-private-other-1-nix, dev-private-nix (all" \
+    "container volume delete dev-private-my-proj-$hash-nix" \
+    "container volume delete dev-private-other-1-nix" \
+    "container volume delete dev-private-nix" "!dev-work-x-1-nix" "container run"
 [[ ! -e $state/private/marker ]] \
     && pass "home wiped" || fail "home wiped" "marker still there"
 [[ -e $state/private/.claude/history.jsonl && -e $state/private/.claude.json ]] \
     && pass "--reset keeps Claude state" || fail "--reset keeps Claude state" "gone"
 touch "$state/private/marker"
-out=$(VOLUME=1 devbox --reset-all <<<y)
+out=$(VOLUMES=$vols devbox --reset-all <<<y)
 check "--reset-all wipes and restarts" "$out" "Reset $state/private" "!keeping" \
-    "container volume delete dev-private-nix" "container run"
+    "container volume delete dev-private-my-proj-$hash-nix" "container run"
 [[ ! -e $state/private/marker && ! -e $state/private/.claude.json && ! -e $state/private/.claude/history.jsonl ]] \
     && pass "--reset-all wipes Claude state" || fail "--reset-all wipes Claude state" "still there"
 rm -rf "$state/private"
-out=$(VOLUME=1 devbox --reset <<<y)
-check "--reset wipes a volume without a home" "$out" "container volume delete dev-private-nix"
+out=$(VOLUMES=dev-private-other-1-nix devbox --reset <<<y)
+check "--reset wipes a volume without a home" "$out" "container volume delete dev-private-other-1-nix"
+out=$(VOLUMES=dev-private-nix devbox)
+check "old shared volume removed" "$out" \
+    "Removing the unused Nix volume dev-private-nix" "!warning: could not delete" "container run"
 mkdir -p "$state/private.nix/store/x"
 chmod a-w "$state/private.nix/store/x" "$state/private.nix/store"
-out=$(VOLUME=1 devbox)
+out=$(devbox)
 check "old host-dir store removed" "$out" "Removing the unused Nix store"
 [[ ! -e $state/private.nix ]] \
     && pass "old host-dir store gone" || fail "old host-dir store gone" "still there"
