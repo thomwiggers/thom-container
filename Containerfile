@@ -184,6 +184,17 @@ RUN cd /opt/home-seed \
 USER root
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
+# Relink Home Manager's files after another folder's container switched
+# (see relink in the entrypoint). Here, before ~/.zshenv (one of the links),
+# and in every zsh: the test is cheap, and ssh commands need the env too.
+RUN printf '%s\n' \
+      '' \
+      '# devbox: relink dangling Home Manager links (see /usr/local/bin/entrypoint).' \
+      'if [[ $UID == 501 && -z ${THOM_CONTAINER_RELINKING:-} ]] \' \
+      '    && { [[ -L ~/.zshenv && ! -e ~/.zshenv ]] || [[ -L ~/.zshrc && ! -e ~/.zshrc ]]; }; then' \
+      '    /usr/local/bin/entrypoint --relink' \
+      'fi' \
+      >> /etc/zsh/zshenv
 
 WORKDIR /project
 ENTRYPOINT ["/usr/local/bin/entrypoint"]

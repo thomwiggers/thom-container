@@ -23,6 +23,7 @@ nix_marker=.thom-container-nix
 nix_vol=/run/nix-state
 # This folder's copies of the home's Nix state, in its /nix overlay.
 nix_home=/nix/var/devbox-home
+relink_lock=/run/user/$user_uid/devbox-relink.lock
 
 log() { echo "entrypoint: $*" >&2; }
 
@@ -118,6 +119,41 @@ mount_claude_project() {
     fi
     mount --bind "$dir/$name" "$target" \
         || log "warning: could not bind $dir/$name; projects share Claude's state"
+}
+
+# Arguments: extra `home-manager switch` arguments.
+switch_home() {
+    nix run "$dotfiles_dir#home-manager" -- switch \
+        --flake "$dotfiles_dir#thom@linux-arm" -b hm-bak "$@" </dev/null
+}
+
+# Whether Home Manager's shell startup files in the home are dangling links.
+# /etc/zsh/zshenv has the same test.
+hm_links_dangle() {
+    local f
+    for f in .zshenv .zshrc; do
+        [ -L "$home_dir/$f" ] && [ ! -e "$home_dir/$f" ] && return 0
+    done
+    return 1
+}
+
+# The home is shared by the profile's folders, but each has its own /nix:
+# once another folder's container switches to newer dotfiles, Home Manager's
+# links in the home (~/.zshrc, ...) point at store paths this one lacks, so
+# shells started here (attach, ssh) come up without them. /etc/zsh/zshenv
+# runs this when they dangle. Switching the shared checkout builds the same
+# paths here; if that fails (offline), activate this folder's own
+# generation, which in turn leaves the other folder to relink.
+relink() {
+    export THOM_CONTAINER_RELINKING=1
+    exec 8>"$relink_lock"
+    flock 8 || true
+    hm_links_dangle || return 0
+    log "Home Manager's links point into another folder's Nix store; switching here"
+    switch_home && return 0
+    log "warning: home-manager switch failed; activating this folder's last generation"
+    "$home_dir/.local/state/nix/profiles/home-manager/activate" </dev/null \
+        || log "warning: could not relink; run home-manager switch"
 }
 
 root_stage() {
@@ -356,9 +392,7 @@ user_stage() {
         fi
         git -C "$dotfiles_dir" add -N -- "$machine" </dev/null \
             || log "warning: could not register $machine; use home-manager switch --flake"
-        if ! nix run "$dotfiles_dir#home-manager" -- switch \
-            --flake "$dotfiles_dir#thom@linux-arm" -b hm-bak \
-            "${switch_args[@]}" </dev/null; then
+        if ! switch_home "${switch_args[@]}"; then
             log "warning: home-manager switch failed; continuing (rerun: home-manager switch)"
         fi
     fi
@@ -378,6 +412,8 @@ user_stage() {
 if [ "${1:-}" = "--user-stage" ]; then
     shift
     user_stage "$@"
+elif [ "${1:-}" = "--relink" ]; then
+    relink
 elif [ "$(id -u)" = 0 ]; then
     root_stage "$@"
 else

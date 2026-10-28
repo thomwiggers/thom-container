@@ -34,6 +34,10 @@ runtime or the entrypoint's root stage; the image only builds in CI
 - The image's `/nix` holds the store; home only has links into it. On an
   image change the entrypoint swaps `container.nix_state` for the image's
   copies, or `nix` itself would be a dangling `~/.nix-profile/bin` link.
+- Each folder has its own /nix overlay but the profile's home is shared, so
+  one folder's `home-manager switch` leaves Home Manager's links dangling in
+  the others' running containers; `/etc/zsh/zshenv` runs `entrypoint
+  --relink` to rebuild them there.
 - Every project is mounted at `/project`, so the entrypoint bind-mounts
   `~/.claude/projects/<host path slug>` (named by the launcher) over
   `~/.claude/projects/-project` to keep Claude's per-project state apart.
