@@ -141,6 +141,9 @@ if [[ $(readlink /etc/localtime 2>/dev/null) == */zoneinfo/?* ]]; then
         "-e THOM_CONTAINER_TZ=$(readlink /etc/localtime | sed 's|.*zoneinfo/||') "
 fi
 
+out=$(unset TZ; devbox 2>&1)
+check "works with TZ unset" "$out" "!TZ: parameter not set"
+
 out=$(TZ=UTC0 devbox)
 check "TZ without a zone name falls back to /etc/localtime" "$out" "!THOM_CONTAINER_TZ=UTC0"
 
