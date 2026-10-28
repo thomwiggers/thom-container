@@ -94,6 +94,29 @@ RUN groupadd --non-unique --gid 20 thom \
  && usermod -aG docker thom \
  && install -d -o 501 -g 20 /nix /project
 
+# sshd for VS Code Remote-SSH and the like, reached as <name>.<dns_domain>
+# from the Mac.
+# - No host keys in the image (Debian's postinst generates some, and the image
+#   is public); the entrypoint installs one that persists in the home.
+# - Public keys of the forwarded agent are authorized by the entrypoint, in
+#   a tmpfs file so no stale keys survive the container.
+# - PAM is off, which makes sshd refuse accounts whose password field starts
+#   with "!" (useradd's default); "*" is unusable as a password but not locked.
+# - sshd gives sessions a bare environment; the entrypoint writes SetEnv.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-server \
+ && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
+ && usermod -p '*' thom \
+ && printf '%s\n' \
+      'HostKey /etc/ssh/ssh_host_ed25519_key' \
+      'AuthorizedKeysFile /run/user/501/authorized_keys' \
+      'AllowUsers thom' \
+      'PermitRootLogin no' \
+      'PasswordAuthentication no' \
+      'KbdInteractiveAuthentication no' \
+      'UsePAM no' \
+      > /etc/ssh/sshd_config.d/devbox.conf
+
 USER thom
 WORKDIR /home/thom
 # The Nix installer wants $USER; ~/.nix-profile/bin is where nix lives.
@@ -139,29 +162,6 @@ RUN cp -a /home/thom /opt/home-seed \
  && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=$(ls /nix/store | sha256sum | cut -d' ' -f1); else nix_id=${DOTFILES_HASH}; fi \
  && echo "${nix_id}" > /opt/home-seed/.thom-container-nix \
  && chown 501:20 /opt/home-seed/.thom-container-image /opt/home-seed/.thom-container-nix
-
-# sshd for VS Code Remote-SSH and the like, reached as <name>.<dns_domain>
-# from the Mac. Installed after the slow layers above so they stay cached.
-# - No host keys in the image (Debian's postinst generates some, and the image
-#   is public); the entrypoint installs one that persists in the home.
-# - Public keys of the forwarded agent are authorized by the entrypoint, in
-#   a tmpfs file so no stale keys survive the container.
-# - PAM is off, which makes sshd refuse accounts whose password field starts
-#   with "!" (useradd's default); "*" is unusable as a password but not locked.
-# - sshd gives sessions a bare environment; the entrypoint writes SetEnv.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends openssh-server \
- && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
- && usermod -p '*' thom \
- && printf '%s\n' \
-      'HostKey /etc/ssh/ssh_host_ed25519_key' \
-      'AuthorizedKeysFile /run/user/501/authorized_keys' \
-      'AllowUsers thom' \
-      'PermitRootLogin no' \
-      'PasswordAuthentication no' \
-      'KbdInteractiveAuthentication no' \
-      'UsePAM no' \
-      > /etc/ssh/sshd_config.d/devbox.conf
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 

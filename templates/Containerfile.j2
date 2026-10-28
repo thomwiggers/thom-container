@@ -94,6 +94,29 @@ RUN groupadd --non-unique --gid {{ user.gid }} {{ user.name }} \
  && usermod -aG docker {{ user.name }} \
  && install -d -o {{ user.uid }} -g {{ user.gid }} /nix {{ container.project }}
 
+# sshd for VS Code Remote-SSH and the like, reached as <name>.<dns_domain>
+# from the Mac.
+# - No host keys in the image (Debian's postinst generates some, and the image
+#   is public); the entrypoint installs one that persists in the home.
+# - Public keys of the forwarded agent are authorized by the entrypoint, in
+#   a tmpfs file so no stale keys survive the container.
+# - PAM is off, which makes sshd refuse accounts whose password field starts
+#   with "!" (useradd's default); "*" is unusable as a password but not locked.
+# - sshd gives sessions a bare environment; the entrypoint writes SetEnv.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-server \
+ && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
+ && usermod -p '*' {{ user.name }} \
+ && printf '%s\n' \
+      'HostKey /etc/ssh/ssh_host_ed25519_key' \
+      'AuthorizedKeysFile /run/user/{{ user.uid }}/authorized_keys' \
+      'AllowUsers {{ user.name }}' \
+      'PermitRootLogin no' \
+      'PasswordAuthentication no' \
+      'KbdInteractiveAuthentication no' \
+      'UsePAM no' \
+      > /etc/ssh/sshd_config.d/devbox.conf
+
 USER {{ user.name }}
 WORKDIR {{ container.home }}
 # The Nix installer wants $USER; ~/.nix-profile/bin is where nix lives.
@@ -139,29 +162,6 @@ RUN cp -a {{ container.home }} {{ container.home_seed }} \
  && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=$(ls /nix/store | sha256sum | cut -d' ' -f1); else nix_id=${DOTFILES_HASH}; fi \
  && echo "${nix_id}" > {{ container.home_seed }}/.thom-container-nix \
  && chown {{ user.uid }}:{{ user.gid }} {{ container.home_seed }}/.thom-container-image {{ container.home_seed }}/.thom-container-nix
-
-# sshd for VS Code Remote-SSH and the like, reached as <name>.<dns_domain>
-# from the Mac. Installed after the slow layers above so they stay cached.
-# - No host keys in the image (Debian's postinst generates some, and the image
-#   is public); the entrypoint installs one that persists in the home.
-# - Public keys of the forwarded agent are authorized by the entrypoint, in
-#   a tmpfs file so no stale keys survive the container.
-# - PAM is off, which makes sshd refuse accounts whose password field starts
-#   with "!" (useradd's default); "*" is unusable as a password but not locked.
-# - sshd gives sessions a bare environment; the entrypoint writes SetEnv.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends openssh-server \
- && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
- && usermod -p '*' {{ user.name }} \
- && printf '%s\n' \
-      'HostKey /etc/ssh/ssh_host_ed25519_key' \
-      'AuthorizedKeysFile /run/user/{{ user.uid }}/authorized_keys' \
-      'AllowUsers {{ user.name }}' \
-      'PermitRootLogin no' \
-      'PasswordAuthentication no' \
-      'KbdInteractiveAuthentication no' \
-      'UsePAM no' \
-      > /etc/ssh/sshd_config.d/devbox.conf
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 
