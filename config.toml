@@ -37,14 +37,15 @@ home = "/home/thom"
 # Pristine copy of the home directory baked into the image; used to seed an
 # empty persistent home on first start.
 home_seed = "/opt/home-seed"
-# Where the launcher mounts the profile's persistent Nix store. The
-# entrypoint seeds it from the image's /nix and bind-mounts it over /nix, so
-# `nix profile add` and Home Manager builds survive the container.
+# Where the launcher mounts the folder's Nix volume. The entrypoint mounts
+# it as an overlay on the image's /nix, so `nix profile add` and Home
+# Manager builds survive the container.
 nix_state_mount = "/run/nix-state"
 # Where the launcher mounts the folder it was started in.
 project = "/project"
 # Nix state under home that points into /nix/store, which comes from the
-# image. When the image changes, these are replaced by the image's copies.
+# image. The entrypoint keeps the directories among them in the folder's
+# /nix overlay; when the image changes, they start over from the image's.
 nix_state = [".nix-profile", ".nix-defexpr", ".local/state/nix", ".local/state/home-manager"]
 # Read-only mount of the host directory holding the unencrypted age key.
 key_dir = "/run/host-age"
@@ -81,8 +82,7 @@ token_fd = 9
 host_token_dir = "/run/host-claude"
 
 [host]
-# Persistent home for profile <p> lives at <state_root>/<p>, its Nix store at
-# <state_root>/<p>.nix.
+# Persistent home for profile <p> lives at <state_root>/<p>.
 state_root = "~/.cache/thom-containers"
 profiles = ["private", "work"]
 default_profile = "private"

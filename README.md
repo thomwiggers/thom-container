@@ -37,15 +37,19 @@ name on the first line) in it or any parent. Precedence: `-p`,
   `~/.cache/thom-containers/<profile>`. On first start it is seeded from the
   image.
   Inside, `$THOM_CONTAINER_PROFILE` says which profile is active.
-- **Nix store** (`/nix`) is persisted per profile too, in the container
-  volume `dev-<profile>-nix` (ext4: the store has paths differing only in
-  case, which a case-insensitive macOS folder can't hold), so `nix profile
-  add` and Home Manager builds survive the container. The entrypoint seeds it from the
-  image's `/nix` (slow, once) and bind-mounts it. The store is replaced when
-  the image's `/nix` changes (the dotfiles hash, so not on every rebuild),
-  dropping what was added since. Don't use two containers of one
-  profile for Nix at the same time: single-user Nix has no cross-container
-  locking. Nothing garbage-collects it; run `nix-collect-garbage -d`.
+- **Nix store** (`/nix`) changes are persisted per profile and folder, in
+  the container volume `dev-<profile>-<folder>-<hash>-nix` (ext4: the store
+  has paths differing only in case, which a case-insensitive macOS folder
+  can't hold), so `nix profile add` and Home Manager builds survive the
+  container. The entrypoint mounts it as an overlay on the image's `/nix`,
+  so it only holds what changed, and binds the home's Nix state directories
+  (`~/.local/state/nix`, …) from it, so they match that folder's store. One
+  volume per folder because Apple's runtime attaches a volume as a disk that
+  only one running container can hold; folders of one profile can run at
+  the same time. The volume starts over when the image's `/nix` changes
+  (the dotfiles hash, so not on every rebuild), dropping what was added
+  since. Nothing garbage-collects it; run `nix-collect-garbage -d`.
+  `--reset` deletes the volumes of all of the profile's folders.
   After the dotfiles switch, the entrypoint warns and suggests `devbox --reset`
   if `~/.nix-profile` dangles or `nix store ping` fails. The store is only
   keyed on the dotfiles hash, so a rebuild that changes `/nix` otherwise (say
