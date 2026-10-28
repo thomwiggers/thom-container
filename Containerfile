@@ -127,14 +127,16 @@ RUN echo "claude cache bust: ${CLAUDE_CACHE_BUST}" \
 # Snapshot the home directory. The real home is a persistent host mount; the
 # entrypoint seeds it from this copy on first start.
 USER root
-ARG IMAGE_ID=unknown
+# Nothing here may differ between builds of the same inputs (no commit or run
+# id): this layer holds the whole home, and a new digest for it, and for every
+# layer after it, means devices pulling it all again.
 # .thom-container-nix identifies the /nix contents: the dotfiles hash changes
-# exactly when the Home Manager layer is rebuilt, so unlike IMAGE_ID it stays
-# put across rebuilds that leave the store alone (a local build without
-# DOTFILES_HASH falls back to IMAGE_ID).
+# exactly when the Home Manager layer is rebuilt, so it stays put across
+# rebuilds that leave the store alone (a local build without DOTFILES_HASH
+# falls back to a hash of the store's contents).
 RUN cp -a /home/thom /opt/home-seed \
- && echo "${IMAGE_ID}" > /opt/home-seed/.thom-container-image \
- && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=${IMAGE_ID}; else nix_id=${DOTFILES_HASH}; fi \
+ && echo "${DOTFILES_HASH} ${CLAUDE_CACHE_BUST}" > /opt/home-seed/.thom-container-image \
+ && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=$(ls /nix/store | sha256sum | cut -d' ' -f1); else nix_id=${DOTFILES_HASH}; fi \
  && echo "${nix_id}" > /opt/home-seed/.thom-container-nix \
  && chown 501:20 /opt/home-seed/.thom-container-image /opt/home-seed/.thom-container-nix
 
