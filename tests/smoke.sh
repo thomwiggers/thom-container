@@ -347,6 +347,7 @@ sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^authorized_keys=.*#authorized_keys=$ep/authorized_keys#" \
     -e "s#^claude_token=.*#claude_token=$ep/claude-token#" \
     -e "s#^claude_src=.*#claude_src=$ep/host-claude/token#" \
+    -e "s#^relink_lock=.*#relink_lock=$ep/relink.lock#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -417,6 +418,25 @@ stub nix 'echo "nix $*"; exit 1'
 out=$(entry)
 check "failed switch does not stop the shell" "$out" "home-manager switch failed" "DONE"
 stub nix 'echo "nix $*"'
+
+# Another folder's switch left Home Manager's links dangling in this one.
+relink() { (cd "$ep" && bash "$ep/entrypoint.sh" --relink 2>&1) }
+out=$(relink)
+check "relink without dangling links does nothing" "$out" "!nix run" "!switching here"
+ln -sfn /nix/store/other-folder-files/.zshrc "$ep/home/.zshrc"
+out=$(relink)
+check "relink switches on a dangling ~/.zshrc" "$out" "switching here" \
+    "nix run $ep/home/.config/home-manager#home-manager -- switch --flake $ep/home/.config/home-manager#thom@linux-arm -b hm-bak" \
+    "!activating"
+mkdir -p "$ep/home/.local/state/nix/profiles/home-manager"
+printf '#!/bin/sh\necho "activate relinking=$THOM_CONTAINER_RELINKING"\n' >"$ep/home/.local/state/nix/profiles/home-manager/activate"
+chmod +x "$ep/home/.local/state/nix/profiles/home-manager/activate"
+stub nix 'echo "nix $*"; exit 1'
+out=$(relink)
+check "relink falls back to this folder's generation" "$out" \
+    "home-manager switch failed" "activate relinking=1" "!could not relink"
+stub nix 'echo "nix $*"'
+rm -rf "$ep/home/.zshrc" "$ep/home/.local/state/nix"
 stub git 'echo "git $*"'
 
 out=$(THOM_CONTAINER_GH_TOKEN=secret entry sh -c 'echo "leak=${THOM_CONTAINER_GH_TOKEN:-none}"')
