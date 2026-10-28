@@ -51,8 +51,35 @@ jobs:
       - name: Smoke tests
         run: tests/smoke.sh
 
+  changes:
+    # The image is built from Containerfile and entrypoint.sh alone. Pushing a
+    # rebuild when only the launcher or docs changed gives `latest` a new
+    # digest, and every Mac pulls and unpacks it again. Scheduled and manual
+    # runs always build.
+    runs-on: ubuntu-slim
+    outputs:
+      build: ${{ steps.diff.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          build=true
+          case $GITHUB_EVENT_NAME in
+            push|pull_request)
+              # Fails for a new branch's all-zero "before": build then.
+              if git fetch --quiet --depth=1 origin "$BASE" \
+                && git diff --quiet "$BASE" HEAD -- Containerfile entrypoint.sh; then
+                build=false
+              fi
+              ;;
+          esac
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
   build:
-    needs: lint
+    needs: [lint, changes]
+    if: needs.changes.outputs.build == 'true'
     # Apple's container runs arm64 Linux; build natively, not under QEMU.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
@@ -107,7 +134,6 @@ jobs:
           build-args: |
             DOTFILES_HASH=${{ steps.inputs.outputs.dotfiles_hash }}
             CLAUDE_CACHE_BUST=${{ steps.inputs.outputs.claude_cache_bust }}
-            IMAGE_ID=${{ github.sha }}-${{ github.run_id }}
           # Registry cache: the Home Manager layer is too large and too slow to
           # rebuild to trust to the 10 GB, evict-on-pressure GHA cache.
           cache-from: type=registry,ref=${{ steps.inputs.outputs.image }}:buildcache
