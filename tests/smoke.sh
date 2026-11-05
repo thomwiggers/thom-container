@@ -358,7 +358,8 @@ entry() {
 stub nix 'echo "nix $*"'
 out=$(entry)
 check "first start pulls and switches with key" "$out" \
-    "seeding $ep/home" "git -C $ep/home/.config/home-manager reset -q -- machines/" \
+    "seeding $ep/home" "git -C $ep/home/.config/home-manager reset -q -- machines/devbox-*" \
+    "git -C $ep/home/.config/home-manager clean -qf -- machines/devbox-*" "!add -N" \
     "git -C $ep/home/.config/home-manager pull --ff-only" \
     "nix run $ep/home/.config/home-manager#home-manager -- switch --flake $ep/home/.config/home-manager#thom@linux-arm -b hm-bak" \
     "DONE" "!--offline" "!refreshing Nix profiles"
