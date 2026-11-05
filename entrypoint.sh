@@ -35,7 +35,7 @@ check_nix() {
     profile=$(readlink -f "$home_dir/.nix-profile" 2>/dev/null || true)
     if [ ! -e "$profile" ] || ! nix store ping >/dev/null 2>&1; then
         log "warning: the Nix store or ~/.nix-profile looks broken; if rerunning"
-        log "  'home-manager switch' doesn't fix it, exit and run 'devbox --reset' on"
+        log "  'hm-update' doesn't fix it, exit and run 'devbox --reset' on"
         log "  the host (wipes this profile's home and Nix stores)"
     fi
 }
@@ -165,7 +165,7 @@ relink() {
     switch_home && return 0
     log "warning: home-manager switch failed; activating this folder's last generation"
     "$home_dir/.local/state/nix/profiles/home-manager/activate" </dev/null \
-        || log "warning: could not relink; run home-manager switch"
+        || log "warning: could not relink; run hm-update"
 }
 
 root_stage() {
@@ -382,30 +382,20 @@ user_stage() {
         # Pull the dotfiles and switch, overwriting local edits to managed
         # files. If the pull fails (e.g. offline), still switch to what we
         # have, without fetching. Failures should not keep the shell from
-        # starting.
-        # This host's machines/ entry (see below) is intent-to-add, which
-        # makes `git pull` with pull.rebase refuse ("unstaged changes"), and
-        # autostash fails on it too; drop it from the index for the pull.
-        local machine
-        machine=machines/$(hostname -s)
-        git -C "$dotfiles_dir" reset -q -- "$machine" </dev/null || true
+        # starting. Inside the container, the dotfiles' hm-update finds the
+        # configuration by platform.
+        # Older launchers registered each folder's host as an intent-to-add
+        # machines/devbox-<folder>; in the shared checkout those make
+        # `git pull` refuse ("unstaged changes"). Remove them.
+        git -C "$dotfiles_dir" reset -q -- 'machines/devbox-*' </dev/null || true
+        git -C "$dotfiles_dir" clean -qf -- 'machines/devbox-*' </dev/null || true
         local -a switch_args=()
         if ! git -C "$dotfiles_dir" pull --ff-only </dev/null; then
             log "warning: dotfiles pull failed; switching without pulling"
             switch_args=(--offline)
         fi
-        # Register this host (devbox-<folder>) under the dotfiles' machines/ so
-        # a plain `home-manager switch` finds thom@<hostname>. `add -N` makes
-        # the flake see the file without staging its contents; it is never
-        # committed.
-        mkdir -p "$dotfiles_dir/machines"
-        if [ ! -e "$dotfiles_dir/$machine" ]; then
-            echo "linux-arm" > "$dotfiles_dir/$machine"
-        fi
-        git -C "$dotfiles_dir" add -N -- "$machine" </dev/null \
-            || log "warning: could not register $machine; use home-manager switch --flake"
         if ! switch_home "${switch_args[@]}"; then
-            log "warning: home-manager switch failed; continuing (rerun: home-manager switch)"
+            log "warning: home-manager switch failed; continuing (rerun: hm-update)"
         fi
     fi
 
