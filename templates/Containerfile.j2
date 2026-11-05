@@ -158,13 +158,13 @@ RUN echo "claude cache bust: ${CLAUDE_CACHE_BUST}" \
 # same inputs (no commit or run id): the home becomes one layer of the final
 # image, and a new digest for it means devices pulling it all again.
 # .thom-container-image says the home is seeded.
-# .thom-container-nix identifies the /nix contents: the dotfiles hash changes
-# exactly when the Home Manager layer is rebuilt, so it stays put across
-# rebuilds that leave the store alone (a local build without DOTFILES_HASH
-# falls back to a hash of the store's contents).
+# .thom-container-nix identifies the /nix contents: a hash of the store's
+# path names. Store paths are named by their inputs, so it stays put when
+# the layers are reused, and changes whenever the Nix installer or the
+# switch reruns with a different result (a new Nix release, say), even with
+# the same dotfiles hash.
 RUN echo "${DOTFILES_HASH} ${CLAUDE_CACHE_BUST}" > .thom-container-image \
- && if [ "${DOTFILES_HASH}" = unknown ]; then nix_id=$(ls /nix/store | sha256sum | cut -d' ' -f1); else nix_id=${DOTFILES_HASH}; fi \
- && echo "${nix_id}" > .thom-container-nix
+ && ls /nix/store | sha256sum | cut -d' ' -f1 > .thom-container-nix
 
 FROM base
 # The store, then the home as the seed: the real home is a persistent host

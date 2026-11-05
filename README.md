@@ -47,13 +47,11 @@ name on the first line) in it or any parent. Precedence: `-p`,
   volume per folder because Apple's runtime attaches a volume as a disk that
   only one running container can hold; folders of one profile can run at
   the same time. The volume starts over when the image's `/nix` changes
-  (the dotfiles hash, so not on every rebuild), dropping what was added
-  since. Nothing garbage-collects it; run `nix-collect-garbage -d`.
+  (its set of store paths, so not when a rebuild reuses the Nix layers),
+  dropping what was added since. Nothing garbage-collects it; run `nix-collect-garbage -d`.
   `--reset` deletes the volumes of all of the profile's folders.
   After the dotfiles switch, the entrypoint warns and suggests `devbox --reset`
-  if `~/.nix-profile` dangles or `nix store ping` fails. The store is only
-  keyed on the dotfiles hash, so a rebuild that changes `/nix` otherwise (say
-  a new Nix version) keeps the old store until you `--reset`.
+  if `~/.nix-profile` dangles or `nix store ping` fails.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/age/keys.txt` exists on the host, it is mounted read-only and
   linked to the same path in the container, so the switch decrypts the
