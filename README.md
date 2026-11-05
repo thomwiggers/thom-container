@@ -84,7 +84,7 @@ name on the first line) in it or any parent. Precedence: `-p`,
   `~/.claude/projects/-project` to keep projects apart.
 - **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs per container.
 - **On every start** the entrypoint pulls the dotfiles and runs
-  `home-manager switch` (with `--offline` when the pull fails). When the image
+  `home-manager switch` (without substituters when the pull fails). When the image
   has changed, the Nix profile links in the persisted home are first replaced
   by the image's.
 - **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so

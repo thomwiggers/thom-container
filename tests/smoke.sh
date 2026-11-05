@@ -383,7 +383,8 @@ out=$(entry)
 check "new image, no key, offline" "$out" \
     "Nix store changed (nix1 -> nix2)" "refreshing Nix profiles" \
     "git -C $ep/home/.config/home-manager pull --ff-only" "dotfiles pull failed" \
-    "-b hm-bak --offline" "DONE" "!seeding"
+    "nix run --offline $ep/home/.config/home-manager#home-manager -- switch" \
+    "-b hm-bak --no-substitute" "DONE" "!seeding"
 [[ $(readlink "$ep/home/.nix-profile") == /nix/store/new-profile ]] \
     && pass "stale profile link replaced" || fail "stale profile link replaced" "$(readlink "$ep/home/.nix-profile")"
 [[ ! -e $ep/home/.config/age/keys.txt && ! -L $ep/home/.config/age/keys.txt ]] \

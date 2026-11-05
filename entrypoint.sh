@@ -127,10 +127,16 @@ mount_claude_project() {
         || log "warning: could not bind $dir/$name; projects share Claude's state"
 }
 
-# Arguments: extra `home-manager switch` arguments.
+# With --offline, neither nix nor home-manager contacts the substituters.
+# home-manager has no --offline of its own; --no-substitute is its nearest.
 switch_home() {
-    nix run "$dotfiles_dir#home-manager" -- switch \
-        --flake "$dotfiles_dir#thom@linux-arm" -b hm-bak "$@" </dev/null
+    local -a nix_args=() hm_args=()
+    if [ "${1:-}" = --offline ]; then
+        nix_args=(--offline)
+        hm_args=(--no-substitute)
+    fi
+    nix run "${nix_args[@]}" "$dotfiles_dir#home-manager" -- switch \
+        --flake "$dotfiles_dir#thom@linux-arm" -b hm-bak "${hm_args[@]}" </dev/null
 }
 
 # Whether Home Manager's shell startup files in the home are dangling links.
