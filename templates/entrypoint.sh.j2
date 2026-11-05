@@ -54,8 +54,14 @@ mount_nix() {
 
     nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
     vol_id=$(cat "$nix_vol/$nix_marker" 2>/dev/null || echo none)
-    if [ "$nix_id" != "$vol_id" ]; then
-        [ "$vol_id" = none ] || log "Nix store changed ($vol_id -> $nix_id); starting $nix_vol over"
+    # Without upper and work, the volume holds a whole /nix from an entrypoint
+    # that bound it over /nix instead, with the same marker.
+    if [ "$nix_id" != "$vol_id" ] || [ ! -d "$nix_vol/upper" ] || [ ! -d "$nix_vol/work" ]; then
+        if [ "$nix_id" != "$vol_id" ]; then
+            [ "$vol_id" = none ] || log "Nix store changed ($vol_id -> $nix_id); starting $nix_vol over"
+        else
+            log "$nix_vol holds a copy of /nix, not an overlay; starting it over"
+        fi
         find "$nix_vol" -mindepth 1 -delete 2>/dev/null || true
         if ! mkdir "$nix_vol/upper" "$nix_vol/work" \
             || ! echo "$nix_id" > "$nix_vol/$nix_marker"; then
