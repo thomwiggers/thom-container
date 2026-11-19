@@ -22,6 +22,7 @@ marker=.thom-container-image
 # and the overlay in state_vol/nix are only valid for the same value.
 nix_marker=.thom-container-nix
 state_vol=/run/devbox-state
+old_home=/run/devbox-old-home
 
 log() { echo "entrypoint: $*" >&2; }
 
@@ -215,8 +216,52 @@ start_dockerd() {
     log "warning: dockerd did not come up; see /var/log/dockerd.log"
 }
 
+# Homes used to be shared by a profile's folders. A new home starts with
+# Claude Code's state from that old home: everything but other folders'
+# projects. Claude keys a project on its path, always /project
+# here, so the folder's own project (named by the launcher after the host
+# path) becomes ~/.claude/projects/-project. Only
+# while the home has no Claude state, so it runs once and not after
+# --reset, which keeps that state.
+migrate_claude() {
+    local name=${THOM_CONTAINER_CLAUDE_PROJECT:-} projects=.claude/projects p
+    unset THOM_CONTAINER_CLAUDE_PROJECT
+    [ -d "$old_home" ] || return 0
+    for p in ".claude" ".claude.json" ; do
+        if [ -e "$home_dir/$p" ] || [ -L "$home_dir/$p" ]; then return 0; fi
+    done
+    log "copying Claude Code state from $old_home"
+    (
+        shopt -s dotglob nullglob
+        cd "$old_home" || exit 1
+        for p in ".claude" ".claude.json" ; do
+            if [ -d "$p" ]; then
+                mkdir -p "$home_dir/$p"
+                for entry in "$p"/*; do
+                    [ "$entry" = "$projects" ] && continue
+                    cp -a "$entry" "$home_dir/$p/"
+                done
+            elif [ -e "$p" ]; then
+                cp -a "$p" "$home_dir/$p"
+            fi
+        done
+    ) || log "warning: some of Claude Code's state could not be copied"
+    case $name in
+        "" ) return 0 ;;
+        *[!A-Za-z0-9-]* | -project)
+            log "warning: bad Claude project name '$name'; not copying its sessions"
+            return 0 ;;
+    esac
+    if [ -d "$old_home/$projects/$name" ]; then
+        mkdir -p "$home_dir/$projects"
+        cp -a "$old_home/$projects/$name" "$home_dir/$projects/-project" \
+            || log "warning: could not copy Claude Code's sessions for this folder"
+    fi
+}
+
 user_stage() {
     local nix_id home_id agent_keys
+    migrate_claude
     if [ ! -e "$home_dir/$marker" ]; then
         # As the user, so the copy works on a mount that refuses chown.
         log "seeding $home_dir from image (existing files are kept)"

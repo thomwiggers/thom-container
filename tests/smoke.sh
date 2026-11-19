@@ -337,6 +337,7 @@ sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^authorized_keys=.*#authorized_keys=$ep/authorized_keys#" \
     -e "s#^claude_token=.*#claude_token=$ep/claude-token#" \
     -e "s#^claude_src=.*#claude_src=$ep/host-claude/token#" \
+    -e "s#^old_home=.*#old_home=$ep/old#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -407,6 +408,7 @@ stub nix 'echo "nix $*"; exit 1'
 out=$(entry)
 check "failed switch does not stop the shell" "$out" "home-manager switch failed" "DONE"
 stub nix 'echo "nix $*"'
+stub git 'echo "git $*"'
 
 
 out=$(THOM_CONTAINER_GH_TOKEN=secret entry sh -c 'echo "leak=${THOM_CONTAINER_GH_TOKEN:-none}"')
@@ -456,5 +458,49 @@ check "installs host terminfo" "$out" "tic -x -o $ep/home/.terminfo - stdin=fake
 stub tic 'exit 1'
 out=$(THOM_CONTAINER_TERMINFO=$fake_terminfo entry)
 check "terminfo failure does not block start" "$out" "warning: could not install terminfo" "DONE"
+
+
+echo "entrypoint.sh (Claude state from the old profile home)"
+fresh_home() { rm -rf "$ep/home"; mkdir -p "$ep/home"; }
+mkdir -p "$ep/old/.claude/projects/-Users-x-proj" "$ep/old/.claude/projects/-Users-x-other"
+echo hist >"$ep/old/.claude/history.jsonl"
+echo sess >"$ep/old/.claude/projects/-Users-x-proj/s.jsonl"
+echo other >"$ep/old/.claude/projects/-Users-x-other/o.jsonl"
+echo '{"old":1}' >"$ep/old/.claude.json"
+
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-proj entry sh -c 'echo "leak=${THOM_CONTAINER_CLAUDE_PROJECT:-none}"')
+check "first start migrates Claude state" "$out" "copying Claude Code state from $ep/old" "seeding" "leak=none"
+[[ -f $ep/home/.claude/history.jsonl && $(cat "$ep/home/.claude.json") == '{"old":1}' \
+    && $(cat "$ep/home/.claude/projects/-project/s.jsonl") == sess \
+    && ! -e $ep/home/.claude/projects/-Users-x-other && ! -e $ep/home/.claude/projects/-Users-x-proj ]] \
+    && pass "only this folder's project, as -project" \
+    || fail "only this folder's project, as -project" "$(cd "$ep/home" && find .claude .claude.json 2>&1)"
+
+echo '{"new":1}' >"$ep/home/.claude.json"
+rm "$ep/home/.claude/projects/-project/s.jsonl"
+rm "$ep/home/.thom-container-image"
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-proj entry)
+check "migration runs once" "$out" "!copying Claude" "DONE"
+[[ $(cat "$ep/home/.claude.json") == '{"new":1}' && ! -e $ep/home/.claude/projects/-project/s.jsonl ]] \
+    && pass "migrated state not overwritten" || fail "migrated state not overwritten" "$(cat "$ep/home/.claude.json")"
+
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-none entry)
+check "migration without this folder's projects" "$out" "copying Claude Code state" "!state could not be copied" "!could not copy" "DONE"
+[[ -f $ep/home/.claude/history.jsonl && ! -e $ep/home/.claude/projects/-project ]] \
+    && pass "global Claude state copied" || fail "global Claude state copied" "$(cd "$ep/home" && find .claude 2>&1)"
+
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=../x entry)
+check "bad project name" "$out" "warning: bad Claude project name" "DONE"
+[[ ! -e $ep/home/.claude/projects/-project ]] \
+    && pass "no -project for a bad name" || fail "no -project for a bad name" "exists"
+
+mv "$ep/old" "$ep/old.away"
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-proj entry)
+check "first start without old home" "$out" "seeding" "!copying Claude" "DONE"
+mv "$ep/old.away" "$ep/old"
 
 summary
