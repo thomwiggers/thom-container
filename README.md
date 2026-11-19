@@ -92,9 +92,9 @@ name on the first line) in it or any parent. Precedence: `-p`,
 - **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs
   per container, mounted by the entrypoint.
 - **On every start** the entrypoint pulls the dotfiles and runs
-  `home-manager switch` (with `--offline` when the pull fails). When the image
-  has changed, the Nix profile links in the home are first replaced by the
-  image's.
+  `home-manager switch` (without substituters when the pull fails). When the
+  image has changed, the Nix profile links in the home are first replaced by
+  the image's.
 - **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so
   the launcher adds `CAP_SYS_ADMIN` and the entrypoint sets it, then drops
   the capability before starting the shell.
