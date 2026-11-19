@@ -245,7 +245,7 @@ fi
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
 # The profile's home from before homes were per folder; a folder's first
-# start copies Claude Code's state and the sshd host key from it.
+# start copies Claude Code's state from it.
 old_home="$state_root/$profile"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
