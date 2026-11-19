@@ -1,9 +1,10 @@
 #!/bin/bash
 # {{ generated_header }}
 #
-# Runs as root: seeds the persistent home directory, fixes up the forwarded
-# SSH agent socket, then re-executes itself as {{ user.name }} to finish the
-# dotfiles install and exec the requested command.
+# Runs as root: mounts the folder's home and Nix store from its state
+# volume, fixes up the forwarded SSH agent socket, then re-executes itself
+# as {{ user.name }} to seed the home, install the dotfiles and exec the
+# requested command.
 set -euo pipefail
 
 user_name={{ user.name }}
@@ -18,12 +19,9 @@ claude_token=/run/user/$user_uid/{{ claude.token_file }}
 claude_src={{ claude.host_token_dir }}/token
 marker=.thom-container-image
 # Identifies the image's /nix (see the Containerfile); Nix state in the home
-# and in the nix_vol overlay is only valid for the same value.
+# and the overlay in state_vol/nix are only valid for the same value.
 nix_marker=.thom-container-nix
-nix_vol={{ container.state_mount }}/nix
-# This folder's copies of the home's Nix state, in its /nix overlay.
-nix_home=/nix/var/devbox-home
-relink_lock=/run/user/$user_uid/devbox-relink.lock
+state_vol={{ container.state_mount }}
 
 log() { echo "entrypoint: $*" >&2; }
 
@@ -40,91 +38,64 @@ check_nix() {
     fi
 }
 
-# Overlay the folder's Nix volume on the image's /nix: the image's store
-# stays underneath, and the volume only holds what changes (the Nix DB, Home
-# Manager builds, `nix profile add`). Changes only make sense over the /nix
-# they were made on, so a different one starts the volume over; an image
-# rebuilt with the same /nix keeps it. The home's Nix state directories
-# point into this store, and the home is shared by the profile's folders, so
-# they live in the overlay too and are bound over the home's. On any failure
-# the container keeps the image's /nix.
-mount_nix() {
-    local nix_id vol_id p src
-    mountpoint -q "$nix_vol" 2>/dev/null || return 0
-
-    nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
-    vol_id=$(cat "$nix_vol/$nix_marker" 2>/dev/null || echo none)
-    # Without upper and work, the volume holds a whole /nix from an entrypoint
-    # that bound it over /nix instead, with the same marker.
-    if [ "$nix_id" != "$vol_id" ] || [ ! -d "$nix_vol/upper" ] || [ ! -d "$nix_vol/work" ]; then
-        if [ "$nix_id" != "$vol_id" ]; then
-            [ "$vol_id" = none ] || log "Nix store changed ($vol_id -> $nix_id); starting $nix_vol over"
-        else
-            log "$nix_vol holds a copy of /nix, not an overlay; starting it over"
-        fi
-        find "$nix_vol" -mindepth 1 -delete 2>/dev/null || true
-        if ! mkdir "$nix_vol/upper" "$nix_vol/work" \
-            || ! echo "$nix_id" > "$nix_vol/$nix_marker"; then
-            log "warning: could not set up $nix_vol; using the image's /nix"
-            return 0
-        fi
-    fi
-    if ! mount -t overlay overlay \
-        -o "lowerdir=/nix,upperdir=$nix_vol/upper,workdir=$nix_vol/work" /nix; then
-        log "warning: could not mount $nix_vol over /nix; using the image's /nix"
+# The folder's state volume holds nix/, its changes to the image's /nix,
+# and home/, its home. The overlay keeps the image's store underneath, and
+# nix/ only holds what changes (the Nix DB, Home Manager builds, `nix
+# profile add`). Changes only make sense over the /nix they were made on, so
+# a different one starts nix/ over; an image rebuilt with the same /nix
+# keeps it. The home stays; user_stage refreshes its Nix links. On any
+# failure the container keeps the image's /nix, or the image's home.
+mount_state() {
+    local nix_vol=$state_vol/nix home_vol=$state_vol/home nix_id vol_id
+    if ! mountpoint -q "$state_vol" 2>/dev/null; then
+        log "warning: no state volume at $state_vol; the home is not persisted"
         return 0
     fi
 
-    # Directories only: a bind follows a link (~/.nix-profile), which points
-    # into these anyway.
-    for p in {% for d in container.nix_state %}"{{ d }}" {% endfor %}; do
-        if [ ! -d "$home_seed/$p" ] || [ -L "$home_seed/$p" ]; then
-            continue
+    if [ -n "${THOM_CONTAINER_RESET:-}" ]; then
+        log "resetting the home and Nix store (keeping{% for p in claude.state %} ~/{{ p }}{% endfor %})"
+        rm -rf "$nix_vol"
+        if [ -d "$home_vol" ]; then
+            find "$home_vol" -mindepth 1 -maxdepth 1 \
+{% for p in claude.state %}
+                ! -name "{{ p }}" \
+{% endfor %}
+                -exec rm -rf {} +
         fi
-        src=$nix_home/$p
-        if [ ! -d "$src" ] && ! { mkdir -p "$(dirname "$src")" && cp -a "$home_seed/$p" "$src"; }; then
-            log "warning: could not seed $src; ~/$p is shared by the profile's folders"
-            continue
-        fi
-        # As the user, so it works on a mount that refuses chown.
-        setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
-            mkdir -p "$home_dir/$p" || true
-        mount --bind "$src" "$home_dir/$p" \
-            || log "warning: could not bind $src; ~/$p is shared by the profile's folders"
-    done
+    fi
+    unset THOM_CONTAINER_RESET
+
+    nix_id=$(cat "$home_seed/$nix_marker" 2>/dev/null || echo unknown)
+    vol_id=$(cat "$nix_vol/$nix_marker" 2>/dev/null || echo none)
+    if [ "$nix_id" != "$vol_id" ]; then
+        [ "$vol_id" = none ] || log "Nix store changed ($vol_id -> $nix_id); starting $nix_vol over"
+        rm -rf "$nix_vol"
+    fi
+    if [ ! -d "$nix_vol/upper" ] \
+        && ! { mkdir -p "$nix_vol/upper" "$nix_vol/work" && echo "$nix_id" > "$nix_vol/$nix_marker"; }; then
+        log "warning: could not set up $nix_vol; using the image's /nix"
+    elif ! mount -t overlay overlay \
+        -o "lowerdir=/nix,upperdir=$nix_vol/upper,workdir=$nix_vol/work" /nix; then
+        log "warning: could not mount $nix_vol over /nix; using the image's /nix"
+    fi
+
+    if ! { mkdir -p "$home_vol" && chown "$user_uid:$user_gid" "$home_vol" \
+        && mount --bind "$home_vol" "$home_dir"; }; then
+        log "warning: could not bind $home_vol; using the image's home, which is not persisted"
+    fi
 }
 
-# Claude Code keeps per-project state under the working directory's name,
-# which is always {{ container.project }}; bind the folder's own directory
-# (named by the launcher) over that one. Here rather than as a runtime mount
-# nested in the home, which can end up underneath the home mount.
-mount_claude_project() {
-    local name=${THOM_CONTAINER_CLAUDE_PROJECT:-}
-    local dir=$home_dir/{{ claude.projects_dir }}
-    local target=$dir/{{ container.project | claude_slug }}
-    unset THOM_CONTAINER_CLAUDE_PROJECT
-    [ -n "$name" ] || return 0
-    case $name in
-        *[!A-Za-z0-9-]* | {{ container.project | claude_slug }})
-            log "warning: bad Claude project name '$name'; projects share Claude's state"
-            return 0 ;;
-    esac
-    # As the user, so it works on a mount that refuses chown. The file keeps
-    # the directory from looking empty: something (Claude's cleanup?) removed
-    # an empty one, and a running container then wrote into the deleted
-    # directory.
-    # shellcheck disable=SC2016  # $1 and $2 are for the inner sh
-    setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
-        sh -c 'mkdir -p "$1" "$2" && : >>"$1/.devbox-keep"' _ "$dir/$name" "$target" || true
-    # Sessions written while the old nested mount was hidden; this mount
-    # hides them in turn.
-    if [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
-        log "warning: ~/{{ claude.projects_dir }}/{{ container.project | claude_slug }} holds sessions from"
-        log "  before the per-project mount; on the host, move them into that"
-        log "  project's directory next to it"
-    fi
-    mount --bind "$dir/$name" "$target" \
-        || log "warning: could not bind $dir/$name; projects share Claude's state"
+# A fresh tmpfs per container for the ephemeral paths under the home. After
+# mount_state's bind, which would hide them; the mount points as the user,
+# so they work on a home that refuses chown.
+mount_ephemeral() {
+    local p
+    for p in {% for d in container.ephemeral %}"{{ d }}" {% endfor %}; do
+        setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+            mkdir -p "$home_dir/$p" || true
+        mount -t tmpfs -o "mode=0700,uid=$user_uid,gid=$user_gid" tmpfs "$home_dir/$p" \
+            || log "warning: could not mount a tmpfs on ~/$p"
+    done
 }
 
 # Arguments: extra `home-manager switch` arguments.
@@ -133,50 +104,13 @@ switch_home() {
         --flake "$dotfiles_dir#{{ dotfiles.config }}" -b hm-bak "$@" </dev/null
 }
 
-# Whether Home Manager's shell startup files in the home are dangling links.
-# /etc/zsh/zshenv has the same test.
-hm_links_dangle() {
-    local f
-    for f in .zshenv .zshrc; do
-        [ -L "$home_dir/$f" ] && [ ! -e "$home_dir/$f" ] && return 0
-    done
-    return 1
-}
-
-# The home is shared by the profile's folders, but each has its own /nix:
-# once another folder's container switches to newer dotfiles, Home Manager's
-# links in the home (~/.zshrc, ...) point at store paths this one lacks, so
-# shells started here (attach, ssh) come up without them. /etc/zsh/zshenv
-# runs this when they dangle. Switching the shared checkout builds the same
-# paths here; if that fails (offline), activate this folder's own
-# generation, which in turn leaves the other folder to relink.
-relink() {
-    export THOM_CONTAINER_RELINKING=1
-    exec 8>"$relink_lock"
-    flock 8 || true
-    hm_links_dangle || return 0
-    log "Home Manager's links point into another folder's Nix store; switching here"
-    switch_home && return 0
-    log "warning: home-manager switch failed; activating this folder's last generation"
-    "$home_dir/.local/state/nix/profiles/home-manager/activate" </dev/null \
-        || log "warning: could not relink; run home-manager switch"
-}
-
 root_stage() {
+    mount_state
+    mount_ephemeral
     chown "$user_uid:$user_gid" "$home_dir" 2>/dev/null || true
-    mount_nix
-    mount_claude_project
 
-    # Keep gpg-agent & co. from putting sockets in the virtiofs home.
+    # Keep gpg-agent & co. from putting sockets in the home.
     install -d -m 0700 -o "$user_uid" -g "$user_gid" "/run/user/$user_uid"
-
-    # Per-container tmpfs mounts under home come up owned by root.
-{% for d in container.ephemeral %}
-    if [ -d "$home_dir/{{ d }}" ]; then
-        chown "$user_uid:$user_gid" "$home_dir/{{ d }}"
-        chmod 0700 "$home_dir/{{ d }}"
-    fi
-{% endfor %}
 
     if [ -n "${THOM_CONTAINER_HOSTNAME:-}" ]; then
         if hostname "$THOM_CONTAINER_HOSTNAME" 2>/dev/null; then
@@ -303,12 +237,10 @@ user_stage() {
     if [ "$nix_id" != "$home_id" ]; then
         # Different /nix: the profile links in the persisted home point at
         # store paths that may no longer exist. Take the image's links; the
-        # switch below relinks the rest. Not the ones mount_nix bound from
-        # this folder's overlay, which match its store.
+        # switch below relinks the rest.
         log "Nix store changed ($home_id -> $nix_id); refreshing Nix profiles"
         local p
         for p in {% for d in container.nix_state %}"{{ d }}" {% endfor %}; do
-            mountpoint -q "$home_dir/$p" 2>/dev/null && continue
             rm -rf "${home_dir:?}/$p"
             if [ -e "$home_seed/$p" ] || [ -L "$home_seed/$p" ]; then
                 mkdir -p "$(dirname "$home_dir/$p")"
@@ -416,8 +348,6 @@ user_stage() {
 if [ "${1:-}" = "--user-stage" ]; then
     shift
     user_stage "$@"
-elif [ "${1:-}" = "--relink" ]; then
-    relink
 elif [ "$(id -u)" = 0 ]; then
     root_stage "$@"
 else
