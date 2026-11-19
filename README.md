@@ -17,7 +17,7 @@ devbox -p work ~/src/foo    # other folder, "work" profile
 devbox --pull               # pull the latest image first
 devbox --attach             # new shell in the running container; fail if none
 devbox --code               # open VS Code on /project in the running container (Remote-SSH)
-devbox --reset              # wipe the profile's persisted home (except ~/.claude, ~/.claude.json) and Nix store (asks first)
+devbox --reset              # wipe this folder's home (except ~/.claude, ~/.claude.json) and Nix store (asks first)
 devbox --reset-all          # same, including Claude Code's history and settings
 devbox --self-update        # update devbox itself (git pull, or re-download)
 devbox -- claude            # run a command instead of a login shell
@@ -33,25 +33,32 @@ A folder can pick its profile with a `.thom-container-profile` file (profile
 name on the first line) in it or any parent. Precedence: `-p`,
 `$THOM_CONTAINER_PROFILE`, the file, then the default.
 
-- **Home directory** (`/home/thom`) is persisted per profile in
-  `~/.cache/thom-containers/<profile>`. On first start it is seeded from the
-  image.
+- **Home directory** (`/home/thom`) and **Nix store** (`/nix`) changes are
+  persisted per profile and folder, in the container volume
+  `dev-<profile>-<folder>-<hash>-state`. Nothing is shared between folders,
+  so one folder's `home-manager switch` cannot leave another's links
+  dangling. A container volume (ext4), because the store has paths
+  differing only in case, which a case-insensitive macOS folder can't hold.
+  One per folder, because Apple's runtime attaches a volume as a disk that
+  only one running container can hold. The entrypoint binds the volume's
+  `home/` over the home, seeded from the image on first start, and mounts
+  its `nix/` as an overlay on the image's `/nix`, so `nix profile add` and
+  Home Manager builds survive the container. `nix/` starts over when the
+  image's `/nix` changes (its set of store paths, so not when a rebuild
+  reuses the Nix layers), dropping what was added since. The home stays,
+  and its Nix profile links are replaced by the image's. Nothing
+  garbage-collects the store; run `nix-collect-garbage -d`.
   Inside, `$THOM_CONTAINER_PROFILE` says which profile is active.
-- **Nix store** (`/nix`) changes are persisted per profile and folder, in
-  the container volume `dev-<profile>-<folder>-<hash>-nix` (ext4: the store
-  has paths differing only in case, which a case-insensitive macOS folder
-  can't hold), so `nix profile add` and Home Manager builds survive the
-  container. The entrypoint mounts it as an overlay on the image's `/nix`,
-  so it only holds what changed, and binds the home's Nix state directories
-  (`~/.local/state/nix`, …) from it, so they match that folder's store. One
-  volume per folder because Apple's runtime attaches a volume as a disk that
-  only one running container can hold; folders of one profile can run at
-  the same time. The volume starts over when the image's `/nix` changes
-  (its set of store paths, so not when a rebuild reuses the Nix layers),
-  dropping what was added since. Nothing garbage-collects it; run `nix-collect-garbage -d`.
-  `--reset` deletes the volumes of all of the profile's folders.
-  After the dotfiles switch, the entrypoint warns and suggests `devbox --reset`
-  if `~/.nix-profile` dangles or `nix store ping` fails.
+- **Reset**: `--reset` empties the folder's `nix/` and its home except
+  `~/.claude` and `~/.claude.json`; `--reset-all` deletes the volume. Both
+  refuse while the folder's container runs. After the dotfiles switch, the
+  entrypoint warns and suggests `devbox --reset` if `~/.nix-profile`
+  dangles or `nix store ping` fails.
+- **Old profile homes**: homes used to be shared per profile, in
+  `~/.cache/thom-containers/<profile>`. While that folder exists, `devbox`
+  mounts it read-only, and a folder's new home copies Claude Code's state
+  from it once: `~/.claude.json`, and `~/.claude` without other folders'
+  projects. Delete it once every folder has started.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/age/keys.txt` exists on the host, it is mounted read-only and
   linked to the same path in the container, so the switch decrypts the
@@ -79,14 +86,14 @@ name on the first line) in it or any parent. Precedence: `-p`,
   shells) opens it on fd 9 and exports
   `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=9`, so no environment variable
   holds the token itself.
-- **Claude Code** per-project state: every folder is mounted at `/project`, so
-  the entrypoint bind-mounts `~/.claude/projects/<host path>` over
-  `~/.claude/projects/-project` to keep projects apart.
-- **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs per container.
+- **Claude Code** keeps its state in the folder's home. Every folder is
+  mounted at `/project`, so its sessions are in `~/.claude/projects/-project`.
+- **Ephemeral paths** (`~/.ssh/sockets`, `~/.config/gh`) are a fresh tmpfs
+  per container, mounted by the entrypoint.
 - **On every start** the entrypoint pulls the dotfiles and runs
   `home-manager switch` (with `--offline` when the pull fails). When the image
-  has changed, the Nix profile links in the persisted home are first replaced
-  by the image's.
+  has changed, the Nix profile links in the home are first replaced by the
+  image's.
 - **Hostname** is `devbox-<folder>`. `container run` has no `--hostname`, so
   the launcher adds `CAP_SYS_ADMIN` and the entrypoint sets it, then drops
   the capability before starting the shell.
@@ -136,7 +143,7 @@ Host *.devbox
     StrictHostKeyChecking accept-new
 ```
 
-The host key is generated once per profile and kept in the persisted home
+The host key is generated once per folder and kept in its home
 (`~/.local/state/sshd`), so it stays valid across containers. Find the name
 with `container ls` or the `ssh:` line `devbox` prints; in VS Code use
 "Remote-SSH: Connect to Host…" with `dev-private-<folder>-<hash>.devbox`, or

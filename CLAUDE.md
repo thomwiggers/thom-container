@@ -34,15 +34,11 @@ runtime or the entrypoint's root stage; the image only builds in CI
 - The image's `/nix` holds the store; home only has links into it. On an
   image change the entrypoint swaps `container.nix_state` for the image's
   copies, or `nix` itself would be a dangling `~/.nix-profile/bin` link.
-- Each folder has its own /nix overlay but the profile's home is shared, so
-  one folder's `home-manager switch` leaves Home Manager's links dangling in
-  the others' running containers; `/etc/zsh/zshenv` runs `entrypoint
-  --relink` to rebuild them there.
-- Every project is mounted at `/project`, so the entrypoint bind-mounts
-  `~/.claude/projects/<host path slug>` (named by the launcher) over
-  `~/.claude/projects/-project` to keep Claude's per-project state apart.
-  Not a `--volume` nested in the home: Apple's runtime doesn't reliably
-  mount it after the home, and then it is hidden.
+- Each (profile, folder) has one state volume holding its home and its
+  /nix overlay; nothing is shared between folders. The entrypoint binds the
+  home from it in the root stage, so a runtime mount nested in the home is
+  hidden: mount such paths in the entrypoint after the bind (as with the
+  ephemeral tmpfs paths).
 - zsh replaces symlinked target files rather than writing through them;
   persist directories, not single files.
 - `astral-sh/setup-uv` has no floating major tags (`@v10` fails); pin the
