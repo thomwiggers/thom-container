@@ -106,13 +106,12 @@ out=$(devbox)
 check "run with defaults" "$out" \
     "container run -i -e TERM=xterm " "--rm --init --name dev-private-my-proj-" \
     "--cpus 10 --memory 8G" \
-    "--volume $state/private:/home/thom" \
-    "--volume dev-private-my-proj-$hash-nix:/run/nix-state" "container volume create dev-private-my-proj-$hash-nix" \
+    "--volume dev-private-my-proj-$hash-state:/run/devbox-state" \
+    "container volume create dev-private-my-proj-$hash-state" \
+    "!:/home/thom " "!--tmpfs" "!THOM_CONTAINER_RESET" "!/run/devbox-old-home" \
     "!volume delete" \
-    "-e THOM_CONTAINER_CLAUDE_PROJECT=$claude_dir " "!/.claude/projects/" \
+    "-e THOM_CONTAINER_CLAUDE_PROJECT=$claude_dir " \
     "--volume $proj:/project --workdir /project" \
-    "--tmpfs /home/thom/.ssh/sockets" \
-    "--tmpfs /home/thom/.config/gh" \
     "-e THOM_CONTAINER_GH_TOKEN=tok " \
     "-e THOM_CONTAINER_TERMINFO=$fake_terminfo " \
     "--ssh" \
@@ -124,13 +123,18 @@ check "run with defaults" "$out" \
     "ghcr.io/thomwiggers/thom-container:latest" \
     "!--cap-add ALL" \
     "ssh: thom@dev-private-my-proj-" ".devbox"
-[[ -d "$state/private/.claude/projects/$claude_dir" ]] \
-    && pass "creates per-project Claude dir" \
-    || fail "creates per-project Claude dir" "$state/private/.claude/projects/$claude_dir missing"
+[[ ! -e $state/private ]] \
+    && pass "no profile home created" || fail "no profile home created" "$state/private exists"
+mkdir -p "$state/private"
+out=$(devbox)
+check "old home mounted read-only" "$out" "--volume $state/private:/run/devbox-old-home:ro"
+rm -rf "$state/private"
+out=$(VOLUMES=dev-private-my-proj-$hash-nix devbox)
+check "old per-folder volume removed" "$out" "Removing the unused Nix volume dev-private-my-proj-$hash-nix" "!warning: could not delete" "container run"
 
 out=$(devbox -p work --docker .. -- ls -la)
 check "profile, DIR, --docker and command" "$out" \
-    "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume $state/work:/home/thom" "--volume $work:/project" \
+    "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume dev-work-" "--volume $work:/project" \
     "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "!CAP_SYS_ADMIN" \
     "-e THOM_CONTAINER_HOSTNAME=devbox-" "latest ls -la"
 
@@ -198,35 +202,21 @@ out=$(devbox) && fail "unknown profile in file" "exit 0" \
 rm "$proj/.thom-container-profile"
 
 echo "--reset"
-out=$(LISTED=$'dev-work-x-1\ndev-private-other-1' devbox --reset </dev/null) && fail "--reset refuses while running" "exit 0" \
-    || check "--reset refuses while running" "$out" "dev-private-other-1" "!dev-work-x-1" "are running"
-touch "$state/private/marker"
-mkdir -p "$state/private/.claude/projects"
-touch "$state/private/.claude.json" "$state/private/.claude/history.jsonl"
-vols="dev-private-my-proj-$hash-nix dev-private-other-1-nix dev-private-nix dev-work-x-1-nix"
-out=$(VOLUMES=$vols devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
-    || check "--reset aborts on no" "$out" "aborted" "!volume delete"
-[[ -e $state/private/marker ]] \
-    && pass "home kept on abort" || fail "home kept on abort" "marker gone"
-out=$(VOLUMES=$vols devbox --reset <<<y)
-check "--reset wipes and restarts" "$out" "Reset $state/private" \
-    "and volumes dev-private-my-proj-$hash-nix, dev-private-other-1-nix, dev-private-nix (all" \
-    "container volume delete dev-private-my-proj-$hash-nix" \
-    "container volume delete dev-private-other-1-nix" \
-    "container volume delete dev-private-nix" "!dev-work-x-1-nix" "container run"
-[[ ! -e $state/private/marker ]] \
-    && pass "home wiped" || fail "home wiped" "marker still there"
-[[ -e $state/private/.claude/history.jsonl && -e $state/private/.claude.json ]] \
-    && pass "--reset keeps Claude state" || fail "--reset keeps Claude state" "gone"
-touch "$state/private/marker"
-out=$(VOLUMES=$vols devbox --reset-all <<<y)
-check "--reset-all wipes and restarts" "$out" "Reset $state/private" "!keeping" \
-    "container volume delete dev-private-my-proj-$hash-nix" "container run"
-[[ ! -e $state/private/marker && ! -e $state/private/.claude.json && ! -e $state/private/.claude/history.jsonl ]] \
-    && pass "--reset-all wipes Claude state" || fail "--reset-all wipes Claude state" "still there"
-rm -rf "$state/private"
-out=$(VOLUMES=dev-private-other-1-nix devbox --reset <<<y)
-check "--reset wipes a volume without a home" "$out" "container volume delete dev-private-other-1-nix"
+out=$(LISTED=dev-private-other-1 devbox --reset <<<y)
+check "--reset ignores other folders' containers" "$out" "container run" "!are running"
+out=$(RUNNING=1 devbox --reset </dev/null) && fail "--reset refuses while this folder runs" "exit 0" \
+    || check "--reset refuses while this folder runs" "$out" "is running" "!container run" "!container exec"
+out=$(devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
+    || check "--reset aborts on no" "$out" "aborted" "!container run"
+out=$(VOLUMES="dev-private-my-proj-$hash-state dev-private-other-1-state" devbox --reset <<<y)
+check "--reset passes the flag" "$out" "keeping ~/.claude, ~/.claude.json" \
+    "-e THOM_CONTAINER_RESET=1" "!volume delete" "container run"
+out=$(VOLUMES="dev-private-my-proj-$hash-state dev-private-other-1-state" devbox --reset-all <<<y)
+check "--reset-all deletes the volume" "$out" "!keeping" \
+    "container volume delete dev-private-my-proj-$hash-state" "!dev-private-other-1" \
+    "!THOM_CONTAINER_RESET" "container run"
+out=$(RUNNING=1 devbox --reset-all </dev/null) && fail "--reset-all refuses while this folder runs" "exit 0" \
+    || check "--reset-all refuses while this folder runs" "$out" "is running" "!volume delete"
 out=$(VOLUMES=dev-private-nix devbox)
 check "old shared volume removed" "$out" \
     "Removing the unused Nix volume dev-private-nix" "!warning: could not delete" "container run"

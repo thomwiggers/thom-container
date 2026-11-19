@@ -40,8 +40,8 @@ running, attach a new shell to it instead.
 The profile can also be set per folder: put its name on the first line of a
 $profile_file file in DIR or any parent directory.
 
-The home directory /home/thom is persisted per profile in
-$state_root/<profile>.
+Each folder and profile has its own home directory /home/thom and
+Nix store, kept in the container volume <name>-state.
 
 Options:
   -p, --profile NAME  Profile to use: ${profiles[*]} (default: private)
@@ -51,10 +51,10 @@ Options:
       --code          Open VS Code on /project in the running container
                       over Remote-SSH (<name>.devbox); fail if there is none
                       [env: THOM_CONTAINER_CODE=<code command>]
-      --reset         Delete the profile's persisted home (except Claude Code's
-                      state: ~/.claude, ~/.claude.json) and Nix store after
-                      asking, so they are re-seeded from the image; refuses if any container
-                      of the profile is running
+      --reset         Wipe this folder's home (except Claude Code's state:
+~/.claude, ~/.claude.json) and Nix store after asking, so
+                      they are re-seeded from the image; refuses if the folder's
+                      container is running
       --reset-all     Like --reset, but delete Claude Code's state too
       --pull          Pull the image before starting
       --self-update   Update this script (git pull if it lives in a clone,
@@ -244,7 +244,9 @@ fi
 (( $+commands[container] )) \
     || die "Apple's 'container' CLI not found (https://github.com/apple/container)"
 
-home_state="$state_root/$profile"
+# The profile's home from before homes were per folder; a folder's first
+# start copies Claude Code's state from it.
+old_home="$state_root/$profile"
 
 # Deterministic per (profile, folder) so a second invocation attaches.
 slug=${${(L)dir:t}//[^a-z0-9-]/-}
@@ -252,14 +254,16 @@ slug=${${slug[1,24]}%-}
 hash=$(print -rn -- "$dir" | shasum -a 256 | cut -c1-8)
 name="dev-$profile-$slug-$hash"
 
-# The folder's changes to the image's /nix (the entrypoint overlays them).
-# A container volume (ext4), not a host directory: macOS file systems are
-# usually case-insensitive, and the Nix store has paths differing only in
-# case (terminfo/a and terminfo/A). One per folder: the runtime attaches a
-# volume as a disk, which only one running container can hold.
-nix_volume="$name-nix"
-# Earlier versions shared one full copy of the store per profile.
-old_nix_volume="dev-$profile-nix"
+# The folder's home, and its changes to the image's /nix (the entrypoint
+# overlays them). A container volume (ext4), not a host directory: macOS
+# file systems are usually case-insensitive, and the Nix store has paths
+# differing only in case (terminfo/a and terminfo/A). One per folder: the
+# runtime attaches a volume as a disk, which only one running container
+# can hold.
+state_volume="$name-state"
+# Earlier versions kept only /nix in a volume, per folder and before that
+# per profile.
+old_volumes=("$name-nix" "dev-$profile-nix")
 
 if [[ -n $open_code ]]; then
     [[ -z $attach && -z $reset ]] || die "--code cannot be combined with --attach or --reset"
@@ -272,61 +276,42 @@ fi
 
 if [[ -n $reset ]]; then
     [[ -z $attach ]] || die "--reset and --attach cannot be combined"
-    # Any folder's container on this profile uses the home being deleted.
-    running=(${(f)"$(container list --quiet 2>/dev/null)"})
-    running=(${(M)running:#dev-$profile-*})
-    (( $#running )) \
-        && die "containers using profile '$profile' are running (${(j:, :)running}); exit them before --reset"
-    # The Nix volumes of all of the profile's folders, and the old one.
-    volumes=(${(f)"$(container volume list --quiet 2>/dev/null)"})
-    volumes=(${(M)volumes:#dev-$profile-(*-|)nix})
-    if [[ -d $home_state ]] || (( $#volumes )); then
-        keep=(".claude" ".claude.json")
-        [[ $reset == all ]] && keep=()
-        print -rn -- "Delete $home_state${keep:+ (keeping ${(j:, :)keep})}${volumes:+ and volumes ${(j:, :)volumes}} (all of profile '$profile')? [y/N] "
-        read -r reply || reply=
-        [[ $reply == [yY]* ]] || die "aborted"
-        # The Nix store goes too: the home's profile links point into it.
-        if (( $#keep )); then
-            # The entrypoint re-seeds around what is left: no marker, and
-            # seeding keeps existing files.
-            for entry in $home_state/*(DN); do
-                (( ${keep[(Ie)${entry:t}]} )) || rm -rf -- "$entry"
-            done
-        else
-            rm -rf -- "$home_state"
+    container inspect "$name" >/dev/null 2>&1 \
+        && die "$name is running; exit it before --reset"
+    if [[ $reset == all ]]; then
+        print -rn -- "Delete the home, Nix store and Claude Code state of $dir (profile '$profile')? [y/N] "
+    else
+        print -rn -- "Reset the home and Nix store of $dir (profile '$profile', keeping ~/.claude, ~/.claude.json)? [y/N] "
+    fi
+    read -r reply || reply=
+    [[ $reply == [yY]* ]] || die "aborted"
+    if [[ $reset == all ]]; then
+        if container volume inspect "$state_volume" >/dev/null 2>&1; then
+            container volume delete "$state_volume" >/dev/null \
+                || die "could not delete volume $state_volume"
         fi
-        for volume in $volumes; do
-            container volume delete "$volume" >/dev/null \
-                || die "could not delete volume $volume"
-        done
-        print -r -- "Reset $home_state"
     fi
 fi
-mkdir -p "$home_state"
-container volume inspect "$nix_volume" >/dev/null 2>&1 \
-    || container volume create "$nix_volume" >/dev/null \
-    || die "could not create volume $nix_volume for the Nix store"
-if container volume inspect "$old_nix_volume" >/dev/null 2>&1; then
-    print -r -- "Removing the unused Nix volume $old_nix_volume" >&2
-    container volume delete "$old_nix_volume" >/dev/null 2>&1 \
-        || print -r -- "warning: could not delete $old_nix_volume; is a container from an older devbox using it?" >&2
-fi
+container volume inspect "$state_volume" >/dev/null 2>&1 \
+    || container volume create "$state_volume" >/dev/null \
+    || die "could not create volume $state_volume for the home and Nix store"
+for volume in $old_volumes; do
+    container volume inspect "$volume" >/dev/null 2>&1 || continue
+    print -r -- "Removing the unused Nix volume $volume" >&2
+    container volume delete "$volume" >/dev/null 2>&1 \
+        || print -r -- "warning: could not delete $volume; is a container from an older devbox using it?" >&2
+done
 # Even earlier ones kept it in a host directory, where seeding fails on the
 # case clashes.
-if [[ -d $home_state.nix ]]; then
-    print -r -- "Removing the unused Nix store $home_state.nix" >&2
-    chmod -R u+w "$home_state.nix" 2>/dev/null
-    rm -rf -- "$home_state.nix"
+if [[ -d $old_home.nix ]]; then
+    print -r -- "Removing the unused Nix store $old_home.nix" >&2
+    chmod -R u+w "$old_home.nix" 2>/dev/null
+    rm -rf -- "$old_home.nix"
 fi
 
-# Claude Code keys per-project state (sessions, memory) on the working
-# directory, which is always /project. The entrypoint binds
-# the directory Claude would have used for the host path over it to keep
-# projects apart. Not a --volume: the runtime doesn't always mount one
-# nested in the home after the home itself, hiding it half the time.
+# Claude Code keys per-project state on the host path; the entrypoint uses
+# it to find this folder's state in the old profile home.
 claude_project=${dir//[^A-Za-z0-9]/-}
-mkdir -p "$home_state/.claude/projects/$claude_project"
 
 tty_args=(-i)
 [[ -t 0 && -t 1 ]] && tty_args=(-i -t)
@@ -366,13 +351,12 @@ run_args=(
     --name "$name"
     --cpus "$cpus"
     --memory "$memory"
-    --volume "$home_state:/home/thom"
-    --volume "$nix_volume:/run/nix-state"
+    --volume "$state_volume:/run/devbox-state"
     --volume "$dir:/project"
     --workdir /project
-    --tmpfs /home/thom/.ssh/sockets
-    --tmpfs /home/thom/.config/gh
 )
+[[ -d $old_home ]] && run_args+=(--volume "$old_home:/run/devbox-old-home:ro")
+[[ $reset == 1 ]] && run_args+=(-e THOM_CONTAINER_RESET=1)
 
 if [[ -n $docker ]]; then
     run_args+=(--cap-add ALL -e THOM_CONTAINER_DOCKER=1)

@@ -20,7 +20,7 @@ marker=.thom-container-image
 # Identifies the image's /nix (see the Containerfile); Nix state in the home
 # and in the nix_vol overlay is only valid for the same value.
 nix_marker=.thom-container-nix
-nix_vol=/run/nix-state
+nix_vol=/run/devbox-state/nix
 # This folder's copies of the home's Nix state, in its /nix overlay.
 nix_home=/nix/var/devbox-home
 relink_lock=/run/user/$user_uid/devbox-relink.lock
