@@ -128,6 +128,12 @@ check "run with defaults" "$out" \
 mkdir -p "$state/private"
 out=$(devbox)
 check "old home mounted read-only" "$out" "--volume $state/private:/run/devbox-old-home:ro"
+out=$(VOLUMES=dev-private-my-proj-$hash-state devbox)
+check "old home not mounted for an existing volume" "$out" "!/run/devbox-old-home" "container run"
+out=$(VOLUMES=dev-private-my-proj-$hash-state devbox --reset-all <<<y)
+check "old home not mounted after --reset-all" "$out" "container volume delete" "!/run/devbox-old-home" "container run"
+out=$(VOLUMES=dev-private-my-proj-$hash-state devbox --reset <<<y)
+check "old home not mounted after --reset" "$out" "THOM_CONTAINER_RESET=1" "!/run/devbox-old-home"
 rm -rf "$state/private"
 out=$(VOLUMES=dev-private-my-proj-$hash-nix devbox)
 check "old per-folder volume removed" "$out" "Removing the unused Nix volume dev-private-my-proj-$hash-nix" "!warning: could not delete" "container run"

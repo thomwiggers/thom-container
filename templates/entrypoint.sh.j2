@@ -184,7 +184,19 @@ start_sshd() {
     [ $# -eq 0 ] || launch=(setpriv "$@")
 
     # The host key persists in the home so the Mac's known_hosts stays valid.
+    # Its directories as the user: made by root, they would keep the user
+    # stage from seeding the rest of ~/.local into a new home.
+    setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups mkdir -p "$keys" || true
     mkdir -p "$keys" /run/sshd
+    # A new home takes the key from the old profile home, which the
+    # launcher mounts only then, so the Mac's known_hosts entry still holds.
+    local old_keys=$old_home/{{ container.sshd_keys }}
+    if [ ! -s "$keys/ssh_host_ed25519_key" ] && [ -s "$old_keys/ssh_host_ed25519_key" ]; then
+        log "taking the sshd host key from $old_home"
+        setpriv --reuid="$user_uid" --regid="$user_gid" --init-groups \
+            cp "$old_keys/ssh_host_ed25519_key" "$old_keys/ssh_host_ed25519_key.pub" "$keys/" \
+            || log "warning: could not copy the old sshd host key; generating a new one"
+    fi
     if [ ! -s "$keys/ssh_host_ed25519_key" ]; then
         rm -f "$keys/ssh_host_ed25519_key" "$keys/ssh_host_ed25519_key.pub"
         ssh-keygen -q -t ed25519 -N '' -C "devbox" -f "$keys/ssh_host_ed25519_key"

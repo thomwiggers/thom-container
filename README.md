@@ -55,10 +55,12 @@ name on the first line) in it or any parent. Precedence: `-p`,
   entrypoint warns and suggests `devbox --reset` if `~/.nix-profile`
   dangles or `nix store ping` fails.
 - **Old profile homes**: homes used to be shared per profile, in
-  `~/.cache/thom-containers/<profile>`. While that folder exists, `devbox`
-  mounts it read-only, and a folder's new home copies Claude Code's state
-  from it once: `~/.claude.json`, and `~/.claude` without other folders'
-  projects. Delete it once every folder has started.
+  `~/.cache/thom-containers/<profile>`. When `devbox` creates a folder's
+  volume (not after `--reset-all`) and that directory exists, it mounts it
+  read-only. The new home copies Claude Code's state from it:
+  `~/.claude.json`, and `~/.claude` without other folders' projects. It
+  also copies the sshd host key, so the Mac's `known_hosts` entry still
+  holds. Delete the directory once every folder has started.
 - **Dotfiles**: the image is built without the age key. When
   `~/.config/age/keys.txt` exists on the host, it is mounted read-only and
   linked to the same path in the container, so the switch decrypts the
