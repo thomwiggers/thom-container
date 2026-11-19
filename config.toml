@@ -32,20 +32,25 @@ config = "thom@linux-arm"
 cache_paths = ["flake.nix", "flake.lock", "home.nix", "hosts", "modules", "files", "secrets", "machines"]
 
 [container]
-# The whole home directory is persisted on the host, per profile.
+# The home directory. Each (profile, folder) has its own, on the folder's
+# state volume.
 home = "/home/thom"
 # Pristine copy of the home directory baked into the image; used to seed an
-# empty persistent home on first start.
+# empty home on first start.
 home_seed = "/opt/home-seed"
-# Where the launcher mounts the folder's Nix volume. The entrypoint mounts
-# it as an overlay on the image's /nix, so `nix profile add` and Home
-# Manager builds survive the container.
-nix_state_mount = "/run/nix-state"
+# Where the launcher mounts the folder's state volume. It holds nix/, which
+# the entrypoint mounts as an overlay on the image's /nix (so `nix profile
+# add` and Home Manager builds survive the container), and home/, which it
+# binds over the home.
+state_mount = "/run/devbox-state"
+# Read-only mount of the profile's home from before homes were per folder.
+# A folder's first start copies Claude Code's state from it.
+old_home = "/run/devbox-old-home"
 # Where the launcher mounts the folder it was started in.
 project = "/project"
 # Nix state under home that points into /nix/store, which comes from the
-# image. The entrypoint keeps the directories among them in the folder's
-# /nix overlay; when the image changes, they start over from the image's.
+# image. When the image's /nix changes, the entrypoint replaces them with
+# the image's copies.
 nix_state = [".nix-profile", ".nix-defexpr", ".local/state/nix", ".local/state/home-manager"]
 # Read-only mount of the host directory holding the unencrypted age key.
 key_dir = "/run/host-age"
@@ -57,7 +62,7 @@ key_link = ".config/age/keys.txt"
 # GlobalKnownHostsFile. Not ~/.ssh/known_hosts, which must stay writable.
 host_known_hosts = "/run/host-ssh/known_hosts"
 # Paths under home that get a fresh tmpfs per container (e.g. ssh
-# ControlMaster sockets, which don't belong on a shared virtiofs mount).
+# ControlMaster sockets).
 # ~/.config/gh holds the GitHub token the entrypoint logs in with; keep it
 # in memory rather than in the persisted home.
 ephemeral = [".ssh/sockets", ".config/gh"]
@@ -69,7 +74,8 @@ sshd_keys = ".local/state/sshd"
 # Claude Code's per-project state, relative to home.
 projects_dir = ".claude/projects"
 # Claude Code's state under home (history, sessions, memory, settings) that
-# `devbox --reset` keeps; `--reset-all` deletes it too.
+# `devbox --reset` keeps and a folder's first start copies from the old
+# profile home; `--reset-all` deletes it too.
 state = [".claude", ".claude.json"]
 # Where the entrypoint keeps the token from `devbox --register-claude-token`,
 # under /run/user/<uid> (not persisted). It is never in the environment:
@@ -82,7 +88,7 @@ token_fd = 9
 host_token_dir = "/run/host-claude"
 
 [host]
-# Persistent home for profile <p> lives at <state_root>/<p>.
+# Profile <p>'s home from before homes were per folder, at <state_root>/<p>.
 state_root = "~/.cache/thom-containers"
 profiles = ["private", "work"]
 default_profile = "private"

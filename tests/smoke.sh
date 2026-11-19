@@ -106,13 +106,12 @@ out=$(devbox)
 check "run with defaults" "$out" \
     "container run -i -e TERM=xterm " "--rm --init --name dev-private-my-proj-" \
     "--cpus 10 --memory 8G" \
-    "--volume $state/private:/home/thom" \
-    "--volume dev-private-my-proj-$hash-nix:/run/nix-state" "container volume create dev-private-my-proj-$hash-nix" \
+    "--volume dev-private-my-proj-$hash-state:/run/devbox-state" \
+    "container volume create dev-private-my-proj-$hash-state" \
+    "!:/home/thom " "!--tmpfs" "!THOM_CONTAINER_RESET" "!/run/devbox-old-home" \
     "!volume delete" \
-    "-e THOM_CONTAINER_CLAUDE_PROJECT=$claude_dir " "!/.claude/projects/" \
+    "-e THOM_CONTAINER_CLAUDE_PROJECT=$claude_dir " \
     "--volume $proj:/project --workdir /project" \
-    "--tmpfs /home/thom/.ssh/sockets" \
-    "--tmpfs /home/thom/.config/gh" \
     "-e THOM_CONTAINER_GH_TOKEN=tok " \
     "-e THOM_CONTAINER_TERMINFO=$fake_terminfo " \
     "--ssh" \
@@ -124,13 +123,24 @@ check "run with defaults" "$out" \
     "ghcr.io/thomwiggers/thom-container:latest" \
     "!--cap-add ALL" \
     "ssh: thom@dev-private-my-proj-" ".devbox"
-[[ -d "$state/private/.claude/projects/$claude_dir" ]] \
-    && pass "creates per-project Claude dir" \
-    || fail "creates per-project Claude dir" "$state/private/.claude/projects/$claude_dir missing"
+[[ ! -e $state/private ]] \
+    && pass "no profile home created" || fail "no profile home created" "$state/private exists"
+mkdir -p "$state/private"
+out=$(devbox)
+check "old home mounted read-only" "$out" "--volume $state/private:/run/devbox-old-home:ro"
+out=$(VOLUMES=dev-private-my-proj-$hash-state devbox)
+check "old home not mounted for an existing volume" "$out" "!/run/devbox-old-home" "container run"
+out=$(VOLUMES=dev-private-my-proj-$hash-state devbox --reset-all <<<y)
+check "old home not mounted after --reset-all" "$out" "container volume delete" "!/run/devbox-old-home" "container run"
+out=$(VOLUMES=dev-private-my-proj-$hash-state devbox --reset <<<y)
+check "old home not mounted after --reset" "$out" "THOM_CONTAINER_RESET=1" "!/run/devbox-old-home"
+rm -rf "$state/private"
+out=$(VOLUMES=dev-private-my-proj-$hash-nix devbox)
+check "old per-folder volume removed" "$out" "Removing the unused Nix volume dev-private-my-proj-$hash-nix" "!warning: could not delete" "container run"
 
 out=$(devbox -p work --docker .. -- ls -la)
 check "profile, DIR, --docker and command" "$out" \
-    "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume $state/work:/home/thom" "--volume $work:/project" \
+    "--name dev-work-" "-e THOM_CONTAINER_PROFILE=work" "--volume dev-work-" "--volume $work:/project" \
     "--cap-add ALL -e THOM_CONTAINER_DOCKER=1" "!CAP_SYS_ADMIN" \
     "-e THOM_CONTAINER_HOSTNAME=devbox-" "latest ls -la"
 
@@ -198,35 +208,21 @@ out=$(devbox) && fail "unknown profile in file" "exit 0" \
 rm "$proj/.thom-container-profile"
 
 echo "--reset"
-out=$(LISTED=$'dev-work-x-1\ndev-private-other-1' devbox --reset </dev/null) && fail "--reset refuses while running" "exit 0" \
-    || check "--reset refuses while running" "$out" "dev-private-other-1" "!dev-work-x-1" "are running"
-touch "$state/private/marker"
-mkdir -p "$state/private/.claude/projects"
-touch "$state/private/.claude.json" "$state/private/.claude/history.jsonl"
-vols="dev-private-my-proj-$hash-nix dev-private-other-1-nix dev-private-nix dev-work-x-1-nix"
-out=$(VOLUMES=$vols devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
-    || check "--reset aborts on no" "$out" "aborted" "!volume delete"
-[[ -e $state/private/marker ]] \
-    && pass "home kept on abort" || fail "home kept on abort" "marker gone"
-out=$(VOLUMES=$vols devbox --reset <<<y)
-check "--reset wipes and restarts" "$out" "Reset $state/private" \
-    "and volumes dev-private-my-proj-$hash-nix, dev-private-other-1-nix, dev-private-nix (all" \
-    "container volume delete dev-private-my-proj-$hash-nix" \
-    "container volume delete dev-private-other-1-nix" \
-    "container volume delete dev-private-nix" "!dev-work-x-1-nix" "container run"
-[[ ! -e $state/private/marker ]] \
-    && pass "home wiped" || fail "home wiped" "marker still there"
-[[ -e $state/private/.claude/history.jsonl && -e $state/private/.claude.json ]] \
-    && pass "--reset keeps Claude state" || fail "--reset keeps Claude state" "gone"
-touch "$state/private/marker"
-out=$(VOLUMES=$vols devbox --reset-all <<<y)
-check "--reset-all wipes and restarts" "$out" "Reset $state/private" "!keeping" \
-    "container volume delete dev-private-my-proj-$hash-nix" "container run"
-[[ ! -e $state/private/marker && ! -e $state/private/.claude.json && ! -e $state/private/.claude/history.jsonl ]] \
-    && pass "--reset-all wipes Claude state" || fail "--reset-all wipes Claude state" "still there"
-rm -rf "$state/private"
-out=$(VOLUMES=dev-private-other-1-nix devbox --reset <<<y)
-check "--reset wipes a volume without a home" "$out" "container volume delete dev-private-other-1-nix"
+out=$(LISTED=dev-private-other-1 devbox --reset <<<y)
+check "--reset ignores other folders' containers" "$out" "container run" "!are running"
+out=$(RUNNING=1 devbox --reset </dev/null) && fail "--reset refuses while this folder runs" "exit 0" \
+    || check "--reset refuses while this folder runs" "$out" "is running" "!container run" "!container exec"
+out=$(devbox --reset <<<n) && fail "--reset aborts on no" "exit 0" \
+    || check "--reset aborts on no" "$out" "aborted" "!container run"
+out=$(VOLUMES="dev-private-my-proj-$hash-state dev-private-other-1-state" devbox --reset <<<y)
+check "--reset passes the flag" "$out" "keeping ~/.claude, ~/.claude.json" \
+    "-e THOM_CONTAINER_RESET=1" "!volume delete" "container run"
+out=$(VOLUMES="dev-private-my-proj-$hash-state dev-private-other-1-state" devbox --reset-all <<<y)
+check "--reset-all deletes the volume" "$out" "!keeping" \
+    "container volume delete dev-private-my-proj-$hash-state" "!dev-private-other-1" \
+    "!THOM_CONTAINER_RESET" "container run"
+out=$(RUNNING=1 devbox --reset-all </dev/null) && fail "--reset-all refuses while this folder runs" "exit 0" \
+    || check "--reset-all refuses while this folder runs" "$out" "is running" "!volume delete"
 out=$(VOLUMES=dev-private-nix devbox)
 check "old shared volume removed" "$out" \
     "Removing the unused Nix volume dev-private-nix" "!warning: could not delete" "container run"
@@ -347,7 +343,7 @@ sed -e "s#^home_dir=.*#home_dir=$ep/home#" \
     -e "s#^authorized_keys=.*#authorized_keys=$ep/authorized_keys#" \
     -e "s#^claude_token=.*#claude_token=$ep/claude-token#" \
     -e "s#^claude_src=.*#claude_src=$ep/host-claude/token#" \
-    -e "s#^relink_lock=.*#relink_lock=$ep/relink.lock#" \
+    -e "s#^old_home=.*#old_home=$ep/old#" \
     "$repo/entrypoint.sh" >"$ep/entrypoint.sh"
 entry() {
     local cmd=("$@")
@@ -418,26 +414,8 @@ stub nix 'echo "nix $*"; exit 1'
 out=$(entry)
 check "failed switch does not stop the shell" "$out" "home-manager switch failed" "DONE"
 stub nix 'echo "nix $*"'
-
-# Another folder's switch left Home Manager's links dangling in this one.
-relink() { (cd "$ep" && bash "$ep/entrypoint.sh" --relink 2>&1) }
-out=$(relink)
-check "relink without dangling links does nothing" "$out" "!nix run" "!switching here"
-ln -sfn /nix/store/other-folder-files/.zshrc "$ep/home/.zshrc"
-out=$(relink)
-check "relink switches on a dangling ~/.zshrc" "$out" "switching here" \
-    "nix run $ep/home/.config/home-manager#home-manager -- switch --flake $ep/home/.config/home-manager#thom@linux-arm -b hm-bak" \
-    "!activating"
-mkdir -p "$ep/home/.local/state/nix/profiles/home-manager"
-printf '#!/bin/sh\necho "activate relinking=$THOM_CONTAINER_RELINKING"\n' >"$ep/home/.local/state/nix/profiles/home-manager/activate"
-chmod +x "$ep/home/.local/state/nix/profiles/home-manager/activate"
-stub nix 'echo "nix $*"; exit 1'
-out=$(relink)
-check "relink falls back to this folder's generation" "$out" \
-    "home-manager switch failed" "activate relinking=1" "!could not relink"
-stub nix 'echo "nix $*"'
-rm -rf "$ep/home/.zshrc" "$ep/home/.local/state/nix"
 stub git 'echo "git $*"'
+
 
 out=$(THOM_CONTAINER_GH_TOKEN=secret entry sh -c 'echo "leak=${THOM_CONTAINER_GH_TOKEN:-none}"')
 check "logs in to GitHub, token not leaked to the shell" "$out" \
@@ -486,5 +464,49 @@ check "installs host terminfo" "$out" "tic -x -o $ep/home/.terminfo - stdin=fake
 stub tic 'exit 1'
 out=$(THOM_CONTAINER_TERMINFO=$fake_terminfo entry)
 check "terminfo failure does not block start" "$out" "warning: could not install terminfo" "DONE"
+
+
+echo "entrypoint.sh (Claude state from the old profile home)"
+fresh_home() { rm -rf "$ep/home"; mkdir -p "$ep/home"; }
+mkdir -p "$ep/old/.claude/projects/-Users-x-proj" "$ep/old/.claude/projects/-Users-x-other"
+echo hist >"$ep/old/.claude/history.jsonl"
+echo sess >"$ep/old/.claude/projects/-Users-x-proj/s.jsonl"
+echo other >"$ep/old/.claude/projects/-Users-x-other/o.jsonl"
+echo '{"old":1}' >"$ep/old/.claude.json"
+
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-proj entry sh -c 'echo "leak=${THOM_CONTAINER_CLAUDE_PROJECT:-none}"')
+check "first start migrates Claude state" "$out" "copying Claude Code state from $ep/old" "seeding" "leak=none"
+[[ -f $ep/home/.claude/history.jsonl && $(cat "$ep/home/.claude.json") == '{"old":1}' \
+    && $(cat "$ep/home/.claude/projects/-project/s.jsonl") == sess \
+    && ! -e $ep/home/.claude/projects/-Users-x-other && ! -e $ep/home/.claude/projects/-Users-x-proj ]] \
+    && pass "only this folder's project, as -project" \
+    || fail "only this folder's project, as -project" "$(cd "$ep/home" && find .claude .claude.json 2>&1)"
+
+echo '{"new":1}' >"$ep/home/.claude.json"
+rm "$ep/home/.claude/projects/-project/s.jsonl"
+rm "$ep/home/.thom-container-image"
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-proj entry)
+check "migration runs once" "$out" "!copying Claude" "DONE"
+[[ $(cat "$ep/home/.claude.json") == '{"new":1}' && ! -e $ep/home/.claude/projects/-project/s.jsonl ]] \
+    && pass "migrated state not overwritten" || fail "migrated state not overwritten" "$(cat "$ep/home/.claude.json")"
+
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-none entry)
+check "migration without this folder's projects" "$out" "copying Claude Code state" "!state could not be copied" "!could not copy" "DONE"
+[[ -f $ep/home/.claude/history.jsonl && ! -e $ep/home/.claude/projects/-project ]] \
+    && pass "global Claude state copied" || fail "global Claude state copied" "$(cd "$ep/home" && find .claude 2>&1)"
+
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=../x entry)
+check "bad project name" "$out" "warning: bad Claude project name" "DONE"
+[[ ! -e $ep/home/.claude/projects/-project ]] \
+    && pass "no -project for a bad name" || fail "no -project for a bad name" "exists"
+
+mv "$ep/old" "$ep/old.away"
+fresh_home
+out=$(THOM_CONTAINER_CLAUDE_PROJECT=-Users-x-proj entry)
+check "first start without old home" "$out" "seeding" "!copying Claude" "DONE"
+mv "$ep/old.away" "$ep/old"
 
 summary
